@@ -206,3 +206,74 @@ IMPORTANT RULES:
             translated_parts.append(translated)
         
         return "\n\n".join(translated_parts)
+    
+    def generate_article(
+        self,
+        content: str,
+        language: str | None = None,
+        length: str = "original",
+    ) -> str:
+        """
+        Generate an article from transcript content using LLM.
+        
+        Args:
+            content: Plain text transcript content
+            language: Target language (None = infer from content)
+            length: Article length - 'original', 'long', 'medium', 'short'
+        
+        Returns:
+            Generated article text
+        """
+        from importlib.resources import files
+        
+        # Load prompt template
+        prompt_path = files("yt").joinpath("prompt.md")
+        prompt_template = prompt_path.read_text()
+        
+        # Replace length placeholder
+        system_prompt = prompt_template.replace("{{length}}", length)
+        
+        # Add language instruction if specified
+        if language:
+            language_name = get_language_name(language)
+            system_prompt = system_prompt.replace(
+                "**Instructions:**",
+                f"**Article Specifications:**\n*   [Language]: {language_name}\n\n**Instructions:**"
+            )
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content},
+            ],
+            "temperature": 0.7,  # Slightly higher for creative writing
+        }
+        
+        try:
+            with httpx.Client(timeout=self.timeout * 2) as client:  # Longer timeout for articles
+                response = client.post(
+                    self.base_url,
+                    headers=headers,
+                    json=payload,
+                )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            return result["choices"][0]["message"]["content"]
+        except httpx.TimeoutException as e:
+            raise TranslationError(f"Article generation timed out") from e
+        except httpx.HTTPStatusError as e:
+            try:
+                error_detail = e.response.json().get("error", {}).get("message", str(e))
+            except Exception:
+                error_detail = str(e)
+            raise TranslationError(f"Article generation API error ({e.response.status_code}): {error_detail}") from e
+        except Exception as e:
+            raise TranslationError(f"Article generation failed: {e}") from e

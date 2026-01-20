@@ -37,6 +37,7 @@ output:
 storage:
   audio_dir: "~/YouTube Subtitles/Audio"
   transcript_dir: "~/YouTube Subtitles/Transcripts"
+  article_dir: "~/YouTube Subtitles/Articles"
 
 # YouTube/yt-dlp settings
 youtube:
@@ -104,8 +105,15 @@ Examples:
     parser.add_argument(
         "--format", "-f",
         dest="output_format",
-        choices=["srt", "vtt", "txt"],
-        help="Output format: srt, vtt, or txt (default: from config or srt)",
+        choices=["srt", "vtt", "txt", "article"],
+        help="Output format: srt, vtt, txt, or article (default: from config or srt)",
+    )
+    
+    parser.add_argument(
+        "--length",
+        choices=["original", "long", "medium", "short"],
+        default="original",
+        help="Article length (only used with --format article): original, long, medium, short",
     )
     
     parser.add_argument(
@@ -242,6 +250,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
             "storage": {
                 "audio_dir": str(config.storage.audio_dir),
                 "transcript_dir": str(config.storage.transcript_dir),
+                "article_dir": str(config.storage.article_dir),
             },
             "youtube": {
                 "cookies_from_browser": config.youtube.cookies_from_browser,
@@ -384,6 +393,7 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
                 youtube_client=youtube,
                 languages=languages,
                 output_format=output_format,
+                article_length=args.length,
                 no_translate=args.no_translate,
                 discard_audio=args.discard_audio,
                 force=args.force,

@@ -54,6 +54,7 @@ output:
 storage:
   audio_dir: "~/YouTube Subtitles/Audio"
   transcript_dir: "~/YouTube Subtitles/Transcripts"
+  article_dir: "~/YouTube Subtitles/Articles"
 
 # YouTube/yt-dlp settings (optional)
 youtube:
@@ -127,7 +128,18 @@ yt "URL" --format vtt
 
 # Plain text (no timestamps)
 yt "URL" --format txt
+
+# Article format (LLM-generated article from transcript)
+yt "URL" --format article
+
+# Article with length control
+yt "URL" --format article --length short    # Concise summary
+yt "URL" --format article --length medium   # Standard article
+yt "URL" --format article --length long     # Comprehensive article
+yt "URL" --format article --length original # Full rewrite (default)
 ```
+
+Articles are saved to `~/YouTube Subtitles/Articles/` as `.md` files.
 
 ### Language Options
 
@@ -196,7 +208,8 @@ yt "URL" --verbose
 | `urls` | YouTube URLs (positional arguments) |
 | `--input`, `-i` | File containing URLs, one per line |
 | `--config` | Path to config.yaml (default: `~/.config/yt/config.yaml`) |
-| `--format`, `-f` | Output format: `srt`, `vtt`, or `txt` |
+| `--format`, `-f` | Output format: `srt`, `vtt`, `txt`, or `article` |
+| `--length` | Article length: `original`, `long`, `medium`, `short` (for `--format article`) |
 | `--languages`, `-l` | Comma-separated target languages (e.g., `en,ja,ko`) |
 | `--pipe`, `-p` | Pipe mode: output transcript to stdout |
 | `--no-save` | Don't save files (only useful with `--pipe`) |

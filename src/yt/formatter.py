@@ -10,6 +10,7 @@ class OutputFormat(Enum):
     SRT = "srt"
     VTT = "vtt"
     TXT = "txt"
+    ARTICLE = "article"
     
     @classmethod
     def from_string(cls, s: str) -> "OutputFormat":
@@ -18,7 +19,7 @@ class OutputFormat(Enum):
         for fmt in cls:
             if fmt.value == s:
                 return fmt
-        raise ValueError(f"Unknown format: {s}. Supported: srt, vtt, txt")
+        raise ValueError(f"Unknown format: {s}. Supported: srt, vtt, txt, article")
 
 
 @dataclass

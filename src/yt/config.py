@@ -18,6 +18,7 @@ class StorageConfig:
     """Storage directory configuration."""
     audio_dir: Path = field(default_factory=lambda: expand_path("~/YouTube Subtitles/Audio"))
     transcript_dir: Path = field(default_factory=lambda: expand_path("~/YouTube Subtitles/Transcripts"))
+    article_dir: Path = field(default_factory=lambda: expand_path("~/YouTube Subtitles/Articles"))
 
 
 @dataclass
@@ -88,6 +89,7 @@ class Config:
         storage = StorageConfig(
             audio_dir=expand_path(storage_data.get("audio_dir", "~/YouTube Subtitles/Audio")),
             transcript_dir=expand_path(storage_data.get("transcript_dir", "~/YouTube Subtitles/Transcripts")),
+            article_dir=expand_path(storage_data.get("article_dir", "~/YouTube Subtitles/Articles")),
         )
         
         # Parse transcription config
@@ -160,3 +162,4 @@ class Config:
         """Create storage directories if they don't exist."""
         self.storage.audio_dir.mkdir(parents=True, exist_ok=True)
         self.storage.transcript_dir.mkdir(parents=True, exist_ok=True)
+        self.storage.article_dir.mkdir(parents=True, exist_ok=True)

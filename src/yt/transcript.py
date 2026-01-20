@@ -315,6 +315,7 @@ def process_video(
     youtube_client: YouTubeClient,
     languages: list[str],
     output_format: OutputFormat = OutputFormat.SRT,
+    article_length: str = "original",
     no_translate: bool = False,
     discard_audio: bool = False,
     force: bool = False,
@@ -331,6 +332,7 @@ def process_video(
         youtube_client: YouTube client
         languages: Target languages
         output_format: Output format
+        article_length: Article length (for article format): original, long, medium, short
         no_translate: Skip translation
         discard_audio: Delete audio after Whisper
         force: Overwrite existing files
@@ -368,14 +370,27 @@ def process_video(
     results: dict[str, Path] = {}
     transcripts: list[str] = []  # For pipe mode output
     
+    # Determine if this is article mode
+    is_article_mode = output_format == OutputFormat.ARTICLE
+    
     for lang in languages:
-        output_filename = format_output_filename(
-            metadata.title,
-            metadata.upload_date,
-            lang,
-            output_format.value,
-        )
-        output_path = config.storage.transcript_dir / output_filename
+        # For article mode, use .md extension and article_dir
+        if is_article_mode:
+            output_filename = format_output_filename(
+                metadata.title,
+                metadata.upload_date,
+                lang,
+                "md",
+            )
+            output_path = config.storage.article_dir / output_filename
+        else:
+            output_filename = format_output_filename(
+                metadata.title,
+                metadata.upload_date,
+                lang,
+                output_format.value,
+            )
+            output_path = config.storage.transcript_dir / output_filename
         
         # Check if file already exists (only matters if saving)
         if save_files and output_path.exists() and not force:
@@ -390,30 +405,57 @@ def process_video(
         
         # Fetch transcript
         if not pipe_mode:
-            status_console.print(f"[cyan]Fetching transcript in {lang}...[/cyan]")
+            if is_article_mode:
+                status_console.print(f"[cyan]Fetching transcript for article in {lang}...[/cyan]")
+            else:
+                status_console.print(f"[cyan]Fetching transcript in {lang}...[/cyan]")
+        
+        # For article mode, fetch as TXT first, then generate article
+        fetch_format = OutputFormat.TXT if is_article_mode else output_format
         
         result = fetcher.fetch_transcript(
             url,
             metadata,
             lang,
-            output_format,
+            fetch_format,
             no_translate,
             discard_audio,
         )
         
         if result:
+            content = result.content
+            method = result.method
+            
+            # Generate article if in article mode
+            if is_article_mode:
+                if not pipe_mode:
+                    status_console.print(f"[yellow]📝 Generating article ({article_length})...[/yellow]")
+                try:
+                    content = fetcher.translation_client.generate_article(
+                        content,
+                        language=lang,
+                        length=article_length,
+                    )
+                    method = f"{method}+article"
+                    if not pipe_mode:
+                        status_console.print(f"[green]✓ Article generated[/green]")
+                except Exception as e:
+                    if not pipe_mode:
+                        status_console.print(f"[red]✗ Article generation failed: {e}[/red]")
+                    continue
+            
             # Collect transcript for pipe mode (only first language)
             if pipe_mode and not transcripts:
-                transcripts.append(result.content)
+                transcripts.append(content)
             
             # Save transcript (if enabled)
             if save_files:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_text(result.content, encoding="utf-8")
+                output_path.write_text(content, encoding="utf-8")
                 if not pipe_mode:
                     # Escape brackets in filename to prevent Rich from interpreting [en] as markup
                     safe_name = output_path.name.replace("[", r"\[")
-                    status_console.print(f"[green]✓ Saved: {safe_name} ({result.method})[/green]")
+                    status_console.print(f"[green]✓ Saved: {safe_name} ({method})[/green]")
             results[lang] = output_path
         else:
             if not pipe_mode:
