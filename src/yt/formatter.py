@@ -155,9 +155,26 @@ def format_vtt(entries: list[SubtitleEntry]) -> str:
     return '\n'.join(lines)
 
 
-def format_txt(entries: list[SubtitleEntry]) -> str:
-    """Format subtitle entries as plain text (no timestamps)."""
-    return '\n'.join(entry.text for entry in entries)
+def format_txt(entries: list[SubtitleEntry], deduplicate: bool = True) -> str:
+    """
+    Format subtitle entries as plain text (no timestamps).
+    
+    Args:
+        entries: List of subtitle entries
+        deduplicate: Remove duplicate consecutive lines (common in auto-generated captions)
+    """
+    if not deduplicate:
+        return '\n'.join(entry.text for entry in entries)
+    
+    # Collect all lines, then deduplicate consecutive duplicates
+    all_lines: list[str] = []
+    for entry in entries:
+        for line in entry.text.split('\n'):
+            line = line.strip()
+            if line and (not all_lines or line != all_lines[-1]):
+                all_lines.append(line)
+    
+    return '\n'.join(all_lines)
 
 
 def _format_time_srt(seconds: float) -> str:

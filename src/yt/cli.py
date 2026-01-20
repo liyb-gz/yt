@@ -28,10 +28,21 @@ languages:
   - en
   - ja
 
+# Output settings
+output:
+  format: srt          # srt, vtt, or txt
+  pipe_mode: false     # When true, output transcript to stdout for piping
+
 # Output directories (~ is expanded)
 storage:
   audio_dir: "~/YouTube Subtitles/Audio"
   transcript_dir: "~/YouTube Subtitles/Transcripts"
+
+# YouTube/yt-dlp settings
+youtube:
+  # cookies_from_browser: chrome    # Browser to extract cookies from (chrome, firefox, safari, etc.)
+  # cookies_file: ~/cookies.txt     # Path to cookies.txt (Netscape format)
+  # player_client: web              # Force YouTube client: web, android, ios, tv
 
 # OpenAI-compatible Whisper API (used when YouTube captions unavailable)
 transcription:
@@ -47,8 +58,8 @@ llm:
 """
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build the argument parser with subcommands."""
+def build_main_parser() -> argparse.ArgumentParser:
+    """Build the main argument parser for URL processing."""
     parser = argparse.ArgumentParser(
         prog="yt",
         description="Download YouTube subtitles with intelligent fallbacks and optional translation.",
@@ -59,60 +70,22 @@ Examples:
   yt "URL1" "URL2" "URL3"
   yt --input urls.txt
   yt "URL" --languages en,ja,ko
+  yt "URL" --pipe | other-tool
   yt config show
   yt config init
         """,
     )
     
     parser.add_argument(
-        "--version",
-        action="version",
-        version=f"%(prog)s {__version__}",
-    )
-    
-    # Create subparsers
-    subparsers = parser.add_subparsers(dest="command", help="Commands")
-    
-    # Config subcommand
-    config_parser = subparsers.add_parser(
-        "config",
-        help="Manage configuration",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    config_subparsers = config_parser.add_subparsers(dest="config_command", help="Config commands")
-    
-    # config show
-    show_parser = config_subparsers.add_parser(
-        "show",
-        help="Display current configuration (or defaults if not configured)",
-    )
-    show_parser.add_argument(
-        "--config",
-        type=Path,
-        help="Path to config.yaml",
-    )
-    
-    # config init
-    init_parser = config_subparsers.add_parser(
-        "init",
-        help="Create a new configuration file with defaults",
-    )
-    init_parser.add_argument(
-        "--config",
-        type=Path,
-        help="Path to create config.yaml (default: ~/.config/yt/config.yaml)",
-    )
-    init_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Overwrite existing config file",
-    )
-    
-    # Main command arguments (for URL processing)
-    parser.add_argument(
         "urls",
         nargs="*",
         help="YouTube URLs to process",
+    )
+    
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     
     parser.add_argument(
@@ -132,13 +105,24 @@ Examples:
         "--format", "-f",
         dest="output_format",
         choices=["srt", "vtt", "txt"],
-        default="srt",
-        help="Output format: srt, vtt, or txt (default: srt)",
+        help="Output format: srt, vtt, or txt (default: from config or srt)",
     )
     
     parser.add_argument(
         "--languages", "-l",
         help="Comma-separated target languages (e.g., en,ja,ko)",
+    )
+    
+    parser.add_argument(
+        "--pipe", "-p",
+        action="store_true",
+        help="Pipe mode: output transcript to stdout (for piping to other tools)",
+    )
+    
+    parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Do not save transcript files (only useful with --pipe)",
     )
     
     parser.add_argument(
@@ -192,6 +176,45 @@ Examples:
     return parser
 
 
+def build_config_parser() -> argparse.ArgumentParser:
+    """Build the config subcommand parser."""
+    parser = argparse.ArgumentParser(
+        prog="yt config",
+        description="Manage yt configuration",
+    )
+    
+    subparsers = parser.add_subparsers(dest="config_command", help="Config commands")
+    
+    # config show
+    show_parser = subparsers.add_parser(
+        "show",
+        help="Display current configuration (or defaults if not configured)",
+    )
+    show_parser.add_argument(
+        "--config",
+        type=Path,
+        help="Path to config.yaml",
+    )
+    
+    # config init
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Create a new configuration file with defaults",
+    )
+    init_parser.add_argument(
+        "--config",
+        type=Path,
+        help="Path to create config.yaml (default: ~/.config/yt/config.yaml)",
+    )
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing config file",
+    )
+    
+    return parser
+
+
 def cmd_config_show(args: argparse.Namespace) -> int:
     """Handle 'config show' command."""
     config_path = expand_path(str(args.config)) if args.config else expand_path(str(DEFAULT_CONFIG_PATH))
@@ -212,9 +235,18 @@ def cmd_config_show(args: argparse.Namespace) -> int:
         config = Config()
         defaults = {
             "languages": config.languages,
+            "output": {
+                "format": config.output.format,
+                "pipe_mode": config.output.pipe_mode,
+            },
             "storage": {
                 "audio_dir": str(config.storage.audio_dir),
                 "transcript_dir": str(config.storage.transcript_dir),
+            },
+            "youtube": {
+                "cookies_from_browser": config.youtube.cookies_from_browser,
+                "cookies_file": config.youtube.cookies_file,
+                "player_client": config.youtube.player_client,
             },
             "transcription": {
                 "base_url": config.transcription.base_url,
@@ -264,11 +296,7 @@ def cmd_config_init(args: argparse.Namespace) -> int:
 
 def collect_urls(args: argparse.Namespace) -> list[str]:
     """Collect URLs from arguments and input file."""
-    urls: list[str] = []
-    
-    # Filter out 'config' if it's in urls (subcommand parsing edge case)
-    if args.urls:
-        urls = [u for u in args.urls if u != "config"]
+    urls: list[str] = list(args.urls) if args.urls else []
     
     if args.input_file:
         if not args.input_file.exists():
@@ -286,55 +314,71 @@ def collect_urls(args: argparse.Namespace) -> list[str]:
 
 def cmd_process_urls(args: argparse.Namespace) -> int:
     """Handle URL processing (main command)."""
-    # Collect URLs
-    urls = collect_urls(args)
-    if not urls:
-        console.print("[red]Error: No URLs provided. Use positional arguments or --input file.[/red]")
-        console.print("[dim]Run 'yt --help' for usage information.[/dim]")
-        return 1
-    
-    # Load config
+    # Load config first (needed for defaults)
     try:
         config = Config.load(args.config)
     except Exception as e:
-        console.print(f"[red]Error loading config: {e}[/red]")
+        print(f"Error loading config: {e}", file=sys.stderr)
         return 1
     
-    # Override languages if specified
+    # Determine pipe mode (flag wins over config)
+    pipe_mode = args.pipe if args.pipe else config.output.pipe_mode
+    save_files = not args.no_save
+    
+    # Create a stderr console for pipe mode (status goes to stderr, content to stdout)
+    status_console = Console(stderr=True) if pipe_mode else console
+    
+    # Collect URLs
+    urls = collect_urls(args)
+    if not urls:
+        status_console.print("[red]Error: No URLs provided. Use positional arguments or --input file.[/red]")
+        if not pipe_mode:
+            status_console.print("[dim]Run 'yt --help' for usage information.[/dim]")
+        return 1
+    
+    # Override languages if specified (flag wins over config)
     if args.languages:
         languages = parse_language_codes(args.languages)
     else:
         languages = config.languages
     
     if not languages:
-        console.print("[red]Error: No target languages specified.[/red]")
+        status_console.print("[red]Error: No target languages specified.[/red]")
         return 1
     
-    # Ensure output directories exist
-    config.ensure_directories()
+    # Ensure output directories exist (only if saving files)
+    if save_files:
+        config.ensure_directories()
     
-    # Parse output format
-    output_format = OutputFormat.from_string(args.output_format)
+    # Parse output format (flag wins over config)
+    format_str = args.output_format if args.output_format else config.output.format
+    output_format = OutputFormat.from_string(format_str)
     
-    # Create YouTube client
+    # Create YouTube client (CLI flags override config)
+    cookies_file = str(args.cookies) if args.cookies else config.youtube.cookies_file
+    cookies_from_browser = args.cookies_from_browser or config.youtube.cookies_from_browser
+    player_client = args.player_client or config.youtube.player_client
+    
     youtube = YouTubeClient(
-        cookies_file=str(args.cookies) if args.cookies else None,
-        cookies_from_browser=args.cookies_from_browser,
-        player_client=args.player_client,
-        verbose=args.verbose,
+        cookies_file=cookies_file,
+        cookies_from_browser=cookies_from_browser,
+        player_client=player_client,
+        verbose=args.verbose and not pipe_mode,  # Suppress verbose in pipe mode
     )
     
     # Process each URL
     success_count = 0
     error_count = 0
+    all_transcripts: list[str] = []  # Collect transcripts for pipe mode
     
     for i, url in enumerate(urls, 1):
-        console.print()
-        console.print(f"[bold blue]Processing {i}/{len(urls)}:[/bold blue] {url}")
-        console.print("-" * 60)
+        if not pipe_mode:
+            status_console.print()
+            status_console.print(f"[bold blue]Processing {i}/{len(urls)}:[/bold blue] {url}")
+            status_console.print("-" * 60)
         
         try:
-            results = process_video(
+            results, transcripts = process_video(
                 url=url,
                 config=config,
                 youtube_client=youtube,
@@ -343,34 +387,47 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
                 no_translate=args.no_translate,
                 discard_audio=args.discard_audio,
                 force=args.force,
-                verbose=args.verbose,
+                verbose=args.verbose and not pipe_mode,
+                pipe_mode=pipe_mode,
+                save_files=save_files,
             )
             
-            if results:
+            if results or transcripts:
                 success_count += 1
+                if pipe_mode and transcripts:
+                    all_transcripts.extend(transcripts)
             else:
                 error_count += 1
         except Exception as e:
-            console.print(f"[red]Error processing {url}: {e}[/red]")
-            if args.verbose:
-                console.print_exception()
+            status_console.print(f"[red]Error processing {url}: {e}[/red]")
+            if args.verbose and not pipe_mode:
+                status_console.print_exception()
             error_count += 1
     
-    # Summary
-    console.print()
-    console.print("-" * 60)
-    console.print(f"[bold]Done![/bold] {success_count} succeeded, {error_count} failed")
+    # Output transcripts to stdout in pipe mode
+    if pipe_mode and all_transcripts:
+        # Join multiple transcripts with separator
+        print("\n".join(all_transcripts))
+    
+    # Summary (only in non-pipe mode)
+    if not pipe_mode:
+        status_console.print()
+        status_console.print("-" * 60)
+        status_console.print(f"[bold]Done![/bold] {success_count} succeeded, {error_count} failed")
     
     return 0 if error_count == 0 else 1
 
 
 def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    if argv is None:
+        argv = sys.argv[1:]
     
-    # Route to appropriate handler
-    if args.command == "config":
+    # Check if this is a config command (handle separately to avoid argparse conflicts)
+    if argv and argv[0] == "config":
+        config_parser = build_config_parser()
+        args = config_parser.parse_args(argv[1:])  # Skip "config"
+        
         if args.config_command == "show":
             return cmd_config_show(args)
         elif args.config_command == "init":
@@ -383,7 +440,9 @@ def main(argv: list[str] | None = None) -> int:
             console.print("  init  - Create a new configuration file")
             return 1
     else:
-        # Default: process URLs
+        # Main command: process URLs
+        main_parser = build_main_parser()
+        args = main_parser.parse_args(argv)
         return cmd_process_urls(args)
 
 

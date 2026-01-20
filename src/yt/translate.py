@@ -7,6 +7,11 @@ import httpx
 from yt.utils import get_language_name
 
 
+class TranslationError(Exception):
+    """Raised when translation fails."""
+    pass
+
+
 class TranslationClient:
     """
     Generic OpenAI-compatible chat client for translation.
@@ -86,18 +91,30 @@ IMPORTANT RULES:
             "temperature": 0.3,  # Lower temperature for more consistent translations
         }
         
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(
-                self.base_url,
-                headers=headers,
-                json=payload,
-            )
-        
-        response.raise_for_status()
-        result = response.json()
-        
-        # Extract content from response
-        return result["choices"][0]["message"]["content"]
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(
+                    self.base_url,
+                    headers=headers,
+                    json=payload,
+                )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            # Extract content from response
+            return result["choices"][0]["message"]["content"]
+        except httpx.TimeoutException as e:
+            raise TranslationError(f"Translation request timed out after {self.timeout}s") from e
+        except httpx.HTTPStatusError as e:
+            # Extract error message from response if possible
+            try:
+                error_detail = e.response.json().get("error", {}).get("message", str(e))
+            except Exception:
+                error_detail = str(e)
+            raise TranslationError(f"Translation API error ({e.response.status_code}): {error_detail}") from e
+        except Exception as e:
+            raise TranslationError(f"Translation failed: {e}") from e
     
     def translate_srt(
         self,

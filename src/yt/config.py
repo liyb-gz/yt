@@ -47,17 +47,41 @@ class LLMConfig:
 
 
 @dataclass
+class OutputConfig:
+    """Output configuration."""
+    format: str = "srt"  # srt, vtt, or txt
+    pipe_mode: bool = False  # When True, output transcript to stdout for piping
+
+
+@dataclass
+class YouTubeConfig:
+    """YouTube/yt-dlp configuration."""
+    cookies_from_browser: str | None = None  # e.g., "chrome", "firefox", "safari"
+    cookies_file: str | None = None  # Path to cookies.txt (Netscape format)
+    player_client: str | None = None  # e.g., "web", "android", "ios", "tv"
+
+
+@dataclass
 class Config:
     """Main configuration container."""
     languages: list[str] = field(default_factory=lambda: ["en"])
+    output: OutputConfig = field(default_factory=OutputConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
     
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
         """Create Config from a dictionary (parsed YAML)."""
         languages = data.get("languages", ["en"])
+        
+        # Parse output config
+        output_data = data.get("output", {})
+        output = OutputConfig(
+            format=output_data.get("format", "srt"),
+            pipe_mode=output_data.get("pipe_mode", False),
+        )
         
         # Parse storage config
         storage_data = data.get("storage", {})
@@ -82,11 +106,34 @@ class Config:
             api_key_env=llm_data.get("api_key_env", "OPENAI_API_KEY"),
         )
         
+        # Parse YouTube config
+        youtube_data = data.get("youtube", {})
+        cookies_from_browser = youtube_data.get("cookies_from_browser")
+        
+        # Validate cookies_from_browser is a browser name, not a boolean
+        if cookies_from_browser is True:
+            raise ValueError(
+                "youtube.cookies_from_browser must be a browser name (e.g., 'chrome', 'firefox', 'safari'), "
+                "not 'true'. Example: cookies_from_browser: chrome"
+            )
+        if cookies_from_browser is not None and not isinstance(cookies_from_browser, str):
+            raise ValueError(
+                f"youtube.cookies_from_browser must be a string, got {type(cookies_from_browser).__name__}"
+            )
+        
+        youtube = YouTubeConfig(
+            cookies_from_browser=cookies_from_browser,
+            cookies_file=youtube_data.get("cookies_file"),
+            player_client=youtube_data.get("player_client"),
+        )
+        
         return cls(
             languages=languages,
+            output=output,
             storage=storage,
             transcription=transcription,
             llm=llm,
+            youtube=youtube,
         )
     
     @classmethod

@@ -7,7 +7,7 @@ from rich.console import Console
 
 from yt.config import Config
 from yt.formatter import OutputFormat, convert_format, parse_srt, parse_vtt, format_srt
-from yt.translate import TranslationClient
+from yt.translate import TranslationClient, TranslationError
 from yt.whisper import WhisperClient, segments_to_srt
 from yt.youtube import YouTubeClient, VideoMetadata
 from yt.utils import format_output_filename, format_audio_filename
@@ -135,8 +135,12 @@ class TranscriptFetcher:
                     console.print(
                         f"[yellow]Found {method} transcript in {source_lang}, translating to {target_language}...[/yellow]"
                     )
-                translated = self._translate_content(content, source_lang, target_language)
-                return self._format_result(translated, target_language, output_format, f"{method}+translated")
+                try:
+                    translated = self._translate_content(content, source_lang, target_language)
+                    return self._format_result(translated, target_language, output_format, f"{method}+translated")
+                except TranslationError as e:
+                    console.print(f"[red]Translation failed: {e}[/red]")
+                    # Fall through to Whisper as last resort
         
         # Step 4: Whisper transcription as last resort
         if self.verbose:
@@ -150,8 +154,12 @@ class TranscriptFetcher:
             if source_lang != target_language and not no_translate:
                 if self.verbose:
                     console.print(f"[yellow]Translating from {source_lang} to {target_language}...[/yellow]")
-                content = self._translate_content(content, source_lang, target_language)
-                return self._format_result(content, target_language, output_format, "whisper+translated")
+                try:
+                    content = self._translate_content(content, source_lang, target_language)
+                    return self._format_result(content, target_language, output_format, "whisper+translated")
+                except TranslationError as e:
+                    console.print(f"[red]Translation failed: {e}[/red]")
+                    return None
             
             return self._format_result(content, source_lang, output_format, "whisper")
         
@@ -185,8 +193,17 @@ class TranscriptFetcher:
             if result:
                 return (result[0], lang, "official")
         
-        # Fall back to auto-generated
-        for lang in metadata.automatic_captions.keys():
+        # Fall back to auto-generated, but only try common languages to avoid rate limiting
+        # YouTube auto-generates captions in many languages; we prioritize widely-used ones
+        preferred_auto_langs = ["en", "en-US", "en-GB", "es", "fr", "de", "pt", "ja", "ko", "zh", "zh-Hans", "zh-Hant"]
+        available_auto = list(metadata.automatic_captions.keys())
+        
+        # Try preferred languages first, then fall back to first available
+        langs_to_try = [l for l in preferred_auto_langs if l in available_auto]
+        if not langs_to_try and available_auto:
+            langs_to_try = available_auto[:1]  # Just try the first one
+        
+        for lang in langs_to_try:
             result = self.youtube.get_subtitle_content(url, lang, prefer_official=False)
             if result:
                 return (result[0], lang, "auto-generated")
@@ -285,7 +302,9 @@ def process_video(
     discard_audio: bool = False,
     force: bool = False,
     verbose: bool = False,
-) -> dict[str, Path]:
+    pipe_mode: bool = False,
+    save_files: bool = True,
+) -> tuple[dict[str, Path], list[str]]:
     """
     Process a single video: fetch transcripts for all target languages.
     
@@ -299,21 +318,30 @@ def process_video(
         discard_audio: Delete audio after Whisper
         force: Overwrite existing files
         verbose: Enable verbose output
+        pipe_mode: If True, suppress status output (for piping)
+        save_files: If True, save transcript files
     
     Returns:
-        Dict mapping language to output file path
+        Tuple of (dict mapping language to output file path, list of transcript contents)
     """
-    fetcher = TranscriptFetcher(config, youtube_client, verbose)
+    from rich.console import Console
+    
+    # Use stderr console in pipe mode
+    status_console = Console(stderr=True) if pipe_mode else console
+    
+    fetcher = TranscriptFetcher(config, youtube_client, verbose and not pipe_mode)
     
     # Get video metadata
-    if verbose:
-        console.print(f"[bold]Fetching metadata for {url}[/bold]")
+    if verbose and not pipe_mode:
+        status_console.print(f"[bold]Fetching metadata for {url}[/bold]")
     metadata = youtube_client.get_metadata(url)
     
-    console.print(f"[bold]{metadata.title}[/bold]")
-    console.print(f"[dim]Uploaded: {metadata.upload_date}, Duration: {metadata.duration}s[/dim]")
+    if not pipe_mode:
+        status_console.print(f"[bold]{metadata.title}[/bold]")
+        status_console.print(f"[dim]Uploaded: {metadata.upload_date}, Duration: {metadata.duration}s[/dim]")
     
     results: dict[str, Path] = {}
+    transcripts: list[str] = []  # For pipe mode output
     
     for lang in languages:
         output_filename = format_output_filename(
@@ -324,14 +352,21 @@ def process_video(
         )
         output_path = config.storage.transcript_dir / output_filename
         
-        # Check if file already exists
-        if output_path.exists() and not force:
-            console.print(f"[yellow]Skipping {lang}: {output_path.name} already exists[/yellow]")
+        # Check if file already exists (only matters if saving)
+        if save_files and output_path.exists() and not force:
+            if not pipe_mode:
+                safe_name = output_path.name.replace("[", r"\[")
+                status_console.print(f"[yellow]Skipping {lang}: {safe_name} already exists[/yellow]")
+            # Still read content for pipe mode
+            if pipe_mode:
+                transcripts.append(output_path.read_text(encoding="utf-8"))
             results[lang] = output_path
             continue
         
         # Fetch transcript
-        console.print(f"[cyan]Fetching transcript in {lang}...[/cyan]")
+        if not pipe_mode:
+            status_console.print(f"[cyan]Fetching transcript in {lang}...[/cyan]")
+        
         result = fetcher.fetch_transcript(
             url,
             metadata,
@@ -342,12 +377,21 @@ def process_video(
         )
         
         if result:
-            # Save transcript
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(result.content, encoding="utf-8")
-            console.print(f"[green]✓ Saved: {output_path.name} ({result.method})[/green]")
+            # Collect transcript for pipe mode
+            if pipe_mode:
+                transcripts.append(result.content)
+            
+            # Save transcript (if enabled)
+            if save_files:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text(result.content, encoding="utf-8")
+                if not pipe_mode:
+                    # Escape brackets in filename to prevent Rich from interpreting [en] as markup
+                    safe_name = output_path.name.replace("[", r"\[")
+                    status_console.print(f"[green]✓ Saved: {safe_name} ({result.method})[/green]")
             results[lang] = output_path
         else:
-            console.print(f"[red]✗ Failed to get transcript in {lang}[/red]")
+            if not pipe_mode:
+                status_console.print(f"[red]✗ Failed to get transcript in {lang}[/red]")
     
-    return results
+    return results, transcripts

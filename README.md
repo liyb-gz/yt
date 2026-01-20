@@ -8,6 +8,7 @@ A CLI tool to download YouTube subtitles with intelligent fallbacks and optional
 - **Multi-language support**: Request subtitles in multiple languages simultaneously
 - **Automatic translation**: Translate transcripts to target languages via LLM (OpenAI-compatible)
 - **Flexible output**: SRT, VTT, or plain text formats
+- **Pipe mode**: Output to stdout for piping to other tools (like [Fabric](https://github.com/danielmiessler/Fabric))
 - **Batch processing**: Process multiple URLs from command line or file
 - **Cookie support**: Bypass YouTube restrictions using browser cookies
 - **Organized storage**: Auto-naming with video title and upload date
@@ -43,6 +44,11 @@ The config file is located at `~/.config/yt/config.yaml`:
 languages:
   - en
   - ja
+
+# Output settings
+output:
+  format: srt          # srt, vtt, or txt
+  pipe_mode: false     # When true, output transcript to stdout for piping
 
 # Output directories (~ is expanded)
 storage:
@@ -125,6 +131,26 @@ yt "URL" --languages en,ja,ko
 yt "URL" --no-translate
 ```
 
+### Pipe Mode
+
+Output transcript to stdout for piping to other tools (like [Fabric](https://github.com/danielmiessler/Fabric)):
+
+```bash
+# Pipe transcript to another tool
+yt "URL" --pipe | fabric --pattern summarize
+
+# Pipe mode without saving files
+yt "URL" --pipe --no-save | other-tool
+
+# Get plain text for easier processing
+yt "URL" --pipe --format txt | fabric --pattern extract_wisdom
+```
+
+In pipe mode:
+- Status messages go to stderr
+- Transcript content goes to stdout
+- Files are still saved by default (use `--no-save` to disable)
+
 ### Other Options
 
 ```bash
@@ -163,6 +189,8 @@ yt "URL" --verbose
 | `--config` | Path to config.yaml (default: `~/.config/yt/config.yaml`) |
 | `--format`, `-f` | Output format: `srt`, `vtt`, or `txt` |
 | `--languages`, `-l` | Comma-separated target languages (e.g., `en,ja,ko`) |
+| `--pipe`, `-p` | Pipe mode: output transcript to stdout |
+| `--no-save` | Don't save files (only useful with `--pipe`) |
 | `--force` | Overwrite existing output files |
 | `--no-translate` | Skip translation; save only source language |
 | `--discard-audio` | Delete audio file after Whisper transcription |
