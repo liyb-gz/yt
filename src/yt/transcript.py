@@ -38,12 +38,16 @@ class TranscriptFetcher:
         config: Config,
         youtube_client: YouTubeClient,
         verbose: bool = False,
+        status_console: Console | None = None,
     ):
         self.config = config
         self.youtube = youtube_client
         self.verbose = verbose
+        self.status_console = status_console or console
         self._whisper_client: WhisperClient | None = None
         self._translation_client: TranslationClient | None = None
+        # Cache for Whisper transcription results (keyed by video ID)
+        self._whisper_cache: dict[str, tuple[str, str]] = {}  # video_id -> (srt_content, language)
     
     @property
     def whisper_client(self) -> WhisperClient:
@@ -219,10 +223,19 @@ class TranscriptFetcher:
         """
         Download audio and transcribe via Whisper.
         
+        Uses cache to avoid re-transcribing the same video for multiple languages.
+        
         Returns (srt_content, detected_language) or None.
         """
+        # Check cache first (avoid re-transcribing for multiple languages)
+        if metadata.id in self._whisper_cache:
+            if self.verbose:
+                self.status_console.print("[dim]Using cached Whisper transcription[/dim]")
+            return self._whisper_cache[metadata.id]
+        
         try:
             # Download audio
+            self.status_console.print("[yellow]⬇ Downloading audio for Whisper transcription...[/yellow]")
             audio_filename = format_audio_filename(metadata.title, metadata.upload_date)
             audio_path = self.youtube.download_audio(
                 url,
@@ -231,9 +244,10 @@ class TranscriptFetcher:
             )
             
             if self.verbose:
-                console.print(f"[dim]Downloaded audio to {audio_path}[/dim]")
+                self.status_console.print(f"[dim]Downloaded audio to {audio_path}[/dim]")
             
-            # Transcribe
+            # Transcribe via Whisper API
+            self.status_console.print("[yellow]🎤 Sending audio to Whisper API for transcription...[/yellow]")
             result = self.whisper_client.transcribe_with_timestamps(audio_path)
             
             # Convert to SRT
@@ -244,17 +258,20 @@ class TranscriptFetcher:
                 srt_content = f"1\n00:00:00,000 --> 99:59:59,999\n{result.text}\n"
             
             detected_lang = result.language or "en"
+            self.status_console.print(f"[green]✓ Whisper transcription complete (detected: {detected_lang})[/green]")
+            
+            # Cache the result for other languages
+            self._whisper_cache[metadata.id] = (srt_content, detected_lang)
             
             # Clean up audio if requested
             if discard_audio and audio_path.exists():
                 audio_path.unlink()
                 if self.verbose:
-                    console.print("[dim]Deleted audio file[/dim]")
+                    self.status_console.print("[dim]Deleted audio file[/dim]")
             
             return (srt_content, detected_lang)
         except Exception as e:
-            if self.verbose:
-                console.print(f"[red]Whisper transcription failed: {e}[/red]")
+            self.status_console.print(f"[red]✗ Whisper transcription failed: {e}[/red]")
             return None
     
     def _translate_content(
@@ -326,10 +343,18 @@ def process_video(
     """
     from rich.console import Console
     
-    # Use stderr console in pipe mode
-    status_console = Console(stderr=True) if pipe_mode else console
+    # Use stderr console in pipe mode (quiet=True suppresses output)
+    if pipe_mode:
+        status_console = Console(stderr=True, quiet=True)
+    else:
+        status_console = console
     
-    fetcher = TranscriptFetcher(config, youtube_client, verbose and not pipe_mode)
+    fetcher = TranscriptFetcher(
+        config,
+        youtube_client,
+        verbose=verbose and not pipe_mode,
+        status_console=status_console,
+    )
     
     # Get video metadata
     if verbose and not pipe_mode:
