@@ -55,6 +55,12 @@ storage:
   audio_dir: "~/YouTube Subtitles/Audio"
   transcript_dir: "~/YouTube Subtitles/Transcripts"
 
+# YouTube/yt-dlp settings (optional)
+youtube:
+  cookies_from_browser: chrome  # or firefox, safari, edge, brave
+  # cookies_file: ~/cookies.txt   # alternative: path to cookies.txt
+  # player_client: web            # force client: web, android, ios, tv
+
 # OpenAI-compatible Whisper API (used when YouTube captions unavailable)
 transcription:
   base_url: https://api.openai.com/v1/audio/transcriptions
@@ -108,6 +114,8 @@ yt "URL" --cookies-from-browser firefox
 yt "URL" --cookies ~/Downloads/cookies.txt
 ```
 
+> **Note:** If cookie-authenticated requests fail (e.g., due to YouTube's JavaScript challenges), the tool automatically retries without cookies. This provides the best of both worlds—cookies work when needed, anonymous fallback when they don't.
+
 ### Output Format
 
 ```bash
@@ -147,9 +155,10 @@ yt "URL" --pipe --format txt | fabric --pattern extract_wisdom
 ```
 
 In pipe mode:
+- **Only the first language** is output to stdout (for clean piping)
 - Status messages go to stderr
 - Transcript content goes to stdout
-- Files are still saved by default (use `--no-save` to disable)
+- Files are still saved for all languages (use `--no-save` to disable)
 
 ### Other Options
 

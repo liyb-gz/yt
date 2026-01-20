@@ -357,8 +357,8 @@ def process_video(
             if not pipe_mode:
                 safe_name = output_path.name.replace("[", r"\[")
                 status_console.print(f"[yellow]Skipping {lang}: {safe_name} already exists[/yellow]")
-            # Still read content for pipe mode
-            if pipe_mode:
+            # Still read content for pipe mode (only first language)
+            if pipe_mode and not transcripts:
                 transcripts.append(output_path.read_text(encoding="utf-8"))
             results[lang] = output_path
             continue
@@ -377,8 +377,8 @@ def process_video(
         )
         
         if result:
-            # Collect transcript for pipe mode
-            if pipe_mode:
+            # Collect transcript for pipe mode (only first language)
+            if pipe_mode and not transcripts:
                 transcripts.append(result.content)
             
             # Save transcript (if enabled)
