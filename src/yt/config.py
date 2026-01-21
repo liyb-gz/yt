@@ -53,6 +53,7 @@ class OutputConfig:
     format: str = "srt"  # srt, vtt, or txt
     pipe_mode: bool = False  # When True, output transcript to stdout for piping
     log_file: Path | None = None  # Path to log file (None = no file logging)
+    filename_date: str = "upload"  # "upload" = video upload date, "request" = today's date, "none" = no date prefix
 
 
 @dataclass
@@ -82,10 +83,16 @@ class Config:
         output_data = data.get("output", {})
         log_file_str = output_data.get("log_file")
         log_file = expand_path(log_file_str) if log_file_str else None
+        filename_date = output_data.get("filename_date", "upload")
+        if filename_date not in ("upload", "request", "none"):
+            raise ValueError(
+                f"output.filename_date must be 'upload', 'request', or 'none', got '{filename_date}'"
+            )
         output = OutputConfig(
             format=output_data.get("format", "srt"),
             pipe_mode=output_data.get("pipe_mode", False),
             log_file=log_file,
+            filename_date=filename_date,
         )
         
         # Parse storage config

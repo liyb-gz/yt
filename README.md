@@ -48,6 +48,7 @@ languages:
 # Output settings
 output:
   format: srt          # srt, vtt, or txt
+  filename_date: upload  # upload, request (today), or none
   pipe_mode: false     # When true, output transcript to stdout for piping
   log_file: "~/YouTube Subtitles/yt.log"  # Log file (all verbose output)
 
@@ -230,10 +231,25 @@ Files are saved with the naming pattern:
 {YYYY-MM-DD} - {Video Title} [{language}].{ext}
 ```
 
-Examples:
-- `2025-10-26 - How AI Works [en].srt`
-- `2025-10-26 - How AI Works [ja].srt`
-- `2025-10-26 - How AI Works [audio].m4a` (if Whisper was used)
+The date prefix is controlled by the `output.filename_date` config option:
+
+| Value | Description |
+|-------|-------------|
+| `upload` | Video upload date (default) - good for archiving |
+| `request` | Today's date - good for personal knowledge management |
+| `none` | No date prefix - just `{Video Title} [{language}].{ext}` |
+
+Examples with `filename_date: upload`:
+- `2024-10-26 - How AI Works [en].srt`
+- `2024-10-26 - How AI Works [ja].srt`
+
+Examples with `filename_date: request` (assuming today is 2026-01-21):
+- `2026-01-21 - How AI Works [en].srt`
+- `2026-01-21 - How AI Works [ja].srt`
+
+Examples with `filename_date: none`:
+- `How AI Works [en].srt`
+- `How AI Works [ja].srt`
 
 ## License
 

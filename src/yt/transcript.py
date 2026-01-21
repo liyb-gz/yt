@@ -1,6 +1,7 @@
 """Transcript fetching with intelligent fallback chain."""
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from rich.console import Console
@@ -232,7 +233,20 @@ class TranscriptFetcher:
         try:
             # Download audio
             self.status_console.print("[yellow]⬇ Downloading audio for Whisper transcription...[/yellow]")
-            audio_filename = format_audio_filename(metadata.title, metadata.upload_date)
+            
+            # Determine audio filename date prefix
+            filename_date_mode = self.config.output.filename_date
+            if filename_date_mode == "upload":
+                audio_date_prefix: str | None = metadata.upload_date
+            elif filename_date_mode == "request":
+                audio_date_prefix = date.today().strftime("%Y-%m-%d")
+            else:  # "none"
+                audio_date_prefix = None
+            
+            audio_filename = format_audio_filename(
+                metadata.title,
+                date_prefix=audio_date_prefix,
+            )
             audio_path = self.youtube.download_audio(
                 url,
                 self.config.storage.audio_dir,
@@ -366,6 +380,15 @@ def process_video(
         status_console.print(f"[bold]{metadata.title}[/bold]")
         status_console.print(f"[dim]Uploaded: {metadata.upload_date}, Duration: {metadata.duration}s[/dim]")
     
+    # Determine filename date prefix based on config
+    filename_date_mode = config.output.filename_date
+    if filename_date_mode == "upload":
+        date_prefix: str | None = metadata.upload_date
+    elif filename_date_mode == "request":
+        date_prefix = date.today().strftime("%Y-%m-%d")
+    else:  # "none"
+        date_prefix = None
+    
     results: dict[str, Path] = {}
     transcripts: list[str] = []  # For pipe mode output
     
@@ -377,17 +400,17 @@ def process_video(
         if is_article_mode:
             output_filename = format_output_filename(
                 metadata.title,
-                metadata.upload_date,
                 lang,
                 "md",
+                date_prefix=date_prefix,
             )
             output_path = config.storage.article_dir / output_filename
         else:
             output_filename = format_output_filename(
                 metadata.title,
-                metadata.upload_date,
                 lang,
                 output_format.value,
+                date_prefix=date_prefix,
             )
             output_path = config.storage.transcript_dir / output_filename
         

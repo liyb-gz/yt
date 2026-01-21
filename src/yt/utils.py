@@ -35,9 +35,9 @@ def sanitize_filename(name: str) -> str:
 
 def format_output_filename(
     title: str,
-    upload_date: str,
     language: str,
     extension: str,
+    date_prefix: str | None = None,
 ) -> str:
     """
     Format output filename according to the pattern:
@@ -45,34 +45,52 @@ def format_output_filename(
     
     Args:
         title: Video title
-        upload_date: Upload date in YYYYMMDD format
         language: Language code (e.g., 'en', 'ja')
         extension: File extension without dot (e.g., 'srt', 'vtt', 'txt')
+        date_prefix: Date in YYYYMMDD or YYYY-MM-DD format, or None to omit date prefix
     
     Returns:
         Formatted filename
     """
-    # Parse YYYYMMDD to YYYY-MM-DD
-    if len(upload_date) == 8 and upload_date.isdigit():
-        formatted_date = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
-    else:
-        formatted_date = upload_date
-    
     safe_title = sanitize_filename(title)
+    
+    if date_prefix is None:
+        return f"{safe_title} [{language}].{extension}"
+    
+    # Parse YYYYMMDD to YYYY-MM-DD if needed
+    if len(date_prefix) == 8 and date_prefix.isdigit():
+        formatted_date = f"{date_prefix[:4]}-{date_prefix[4:6]}-{date_prefix[6:8]}"
+    else:
+        formatted_date = date_prefix
+    
     return f"{formatted_date} - {safe_title} [{language}].{extension}"
 
 
-def format_audio_filename(title: str, upload_date: str, extension: str = "m4a") -> str:
+def format_audio_filename(
+    title: str,
+    extension: str = "m4a",
+    date_prefix: str | None = None,
+) -> str:
     """
     Format audio filename according to the pattern:
     {YYYY-MM-DD} - {Video Title} [audio].{ext}
-    """
-    if len(upload_date) == 8 and upload_date.isdigit():
-        formatted_date = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
-    else:
-        formatted_date = upload_date
     
+    Args:
+        title: Video title
+        extension: File extension without dot (default: 'm4a')
+        date_prefix: Date in YYYYMMDD or YYYY-MM-DD format, or None to omit date prefix
+    """
     safe_title = sanitize_filename(title)
+    
+    if date_prefix is None:
+        return f"{safe_title} [audio].{extension}"
+    
+    # Parse YYYYMMDD to YYYY-MM-DD if needed
+    if len(date_prefix) == 8 and date_prefix.isdigit():
+        formatted_date = f"{date_prefix[:4]}-{date_prefix[4:6]}-{date_prefix[6:8]}"
+    else:
+        formatted_date = date_prefix
+    
     return f"{formatted_date} - {safe_title} [audio].{extension}"
 
 
