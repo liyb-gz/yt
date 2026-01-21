@@ -110,25 +110,17 @@ class TranscriptFetcher:
         Returns:
             TranscriptResult or None if all methods fail
         """
-        # Step 1: Try to get transcript directly in target language
+        # Step 1: Try to get transcript directly in target language (prefer official)
         if self.verbose:
-            console.print(f"[dim]Trying official transcript in {target_language}...[/dim]")
+            console.print(f"[dim]Trying transcript in {target_language}...[/dim]")
         
         result = self._try_youtube_transcript(url, target_language, prefer_official=True)
         if result:
+            content, is_automatic = result
+            method = "auto-generated" if is_automatic else "official"
             if self.verbose:
-                console.print(f"[green]✓ Found official transcript in {target_language}[/green]")
-            return self._format_result(result, target_language, output_format, "official")
-        
-        # Step 2: Try auto-generated in target language
-        if self.verbose:
-            console.print(f"[dim]Trying auto-generated captions in {target_language}...[/dim]")
-        
-        result = self._try_youtube_transcript(url, target_language, prefer_official=False)
-        if result:
-            if self.verbose:
-                console.print(f"[green]✓ Found auto-generated captions in {target_language}[/green]")
-            return self._format_result(result, target_language, output_format, "auto-generated")
+                console.print(f"[green]✓ Found {method} transcript in {target_language}[/green]")
+            return self._format_result(content, target_language, output_format, method)
         
         # Step 3: If translation is allowed, try getting transcript in source language
         if not no_translate:
@@ -174,11 +166,15 @@ class TranscriptFetcher:
         url: str,
         language: str,
         prefer_official: bool,
-    ) -> str | None:
-        """Try to get YouTube transcript in specific language."""
+    ) -> tuple[str, bool] | None:
+        """
+        Try to get YouTube transcript in specific language.
+        
+        Returns (content, is_automatic) or None.
+        """
         result = self.youtube.get_subtitle_content(url, language, prefer_official)
         if result:
-            return result[0]  # Return content, ignore is_automatic flag
+            return result  # (content, is_automatic)
         return None
     
     def _try_any_youtube_transcript(
@@ -439,10 +435,11 @@ def process_video(
             
             # Generate article in target language (1 LLM call handles both translation + article)
             if not pipe_mode:
+                length_info = "" if article_length == "original" else f", length: {article_length}"
                 if source_lang != lang:
-                    status_console.print(f"[yellow]📝 Generating article in {lang} from {source_lang} transcript ({article_length})...[/yellow]")
+                    status_console.print(f"[yellow]📝 Generating {lang} article from {source_lang} {method} transcript{length_info}...[/yellow]")
                 else:
-                    status_console.print(f"[yellow]📝 Generating article ({article_length})...[/yellow]")
+                    status_console.print(f"[yellow]📝 Generating article from {method} transcript{length_info}...[/yellow]")
             try:
                 content = fetcher.translation_client.generate_article(
                     source_content,
