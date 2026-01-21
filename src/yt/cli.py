@@ -1,11 +1,14 @@
 """Command-line interface for yt."""
 
 import argparse
+import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import yaml
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.syntax import Syntax
 
 from yt import __version__
@@ -17,6 +20,58 @@ from yt.youtube import YouTubeClient
 
 
 console = Console()
+logger = logging.getLogger("yt")
+
+
+def setup_logging(log_file: Path | None, verbose: bool = False) -> None:
+    """
+    Set up logging to file and console.
+    
+    Args:
+        log_file: Path to log file (None = no file logging)
+        verbose: Enable verbose console output
+    """
+    # Set root logger level
+    logger.setLevel(logging.DEBUG)
+    
+    # Remove existing handlers
+    logger.handlers.clear()
+    
+    # File handler (always verbose if configured)
+    if log_file:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
+        file_formatter = logging.Formatter(
+            "%(asctime)s | %(levelname)-8s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
+        
+        # Log session start
+        logger.info("=" * 60)
+        logger.info(f"yt v{__version__} - Session started")
+        logger.info(f"Command: {' '.join(sys.argv)}")
+        logger.info("=" * 60)
+
+
+class LoggingConsole(Console):
+    """Console wrapper that also logs output to file."""
+    
+    def print(self, *objects, **kwargs) -> None:
+        """Print to console and log to file."""
+        super().print(*objects, **kwargs)
+        
+        # Also log to file (strip rich markup for clean logs)
+        if logger.handlers:
+            # Convert objects to plain text
+            from io import StringIO
+            temp_console = Console(file=StringIO(), force_terminal=False, no_color=True)
+            temp_console.print(*objects, **kwargs)
+            text = temp_console.file.getvalue().strip()
+            if text:
+                logger.info(text)
 
 
 DEFAULT_CONFIG_CONTENT = """\
@@ -32,6 +87,7 @@ languages:
 output:
   format: srt          # srt, vtt, or txt
   pipe_mode: false     # When true, output transcript to stdout for piping
+  # log_file: "~/YouTube Subtitles/yt.log"  # Log file path (verbose logs always written here)
 
 # Output directories (~ is expanded)
 storage:
@@ -246,6 +302,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
             "output": {
                 "format": config.output.format,
                 "pipe_mode": config.output.pipe_mode,
+                "log_file": str(config.output.log_file) if config.output.log_file else None,
             },
             "storage": {
                 "audio_dir": str(config.storage.audio_dir),
@@ -330,12 +387,22 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
         print(f"Error loading config: {e}", file=sys.stderr)
         return 1
     
+    # Set up logging (file logging if configured)
+    setup_logging(config.output.log_file, verbose=args.verbose)
+    
     # Determine pipe mode (flag wins over config)
     pipe_mode = args.pipe if args.pipe else config.output.pipe_mode
     save_files = not args.no_save
     
-    # Create a stderr console for pipe mode (status goes to stderr, content to stdout)
-    status_console = Console(stderr=True) if pipe_mode else console
+    # Create console with logging support
+    # In pipe mode: stderr + quiet (no output), file logging still works
+    # Normal mode: LoggingConsole that writes to both console and log file
+    if pipe_mode:
+        status_console = Console(stderr=True, quiet=True)
+    elif config.output.log_file:
+        status_console = LoggingConsole()
+    else:
+        status_console = console
     
     # Collect URLs
     urls = collect_urls(args)
@@ -400,6 +467,7 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
                 verbose=args.verbose and not pipe_mode,
                 pipe_mode=pipe_mode,
                 save_files=save_files,
+                status_console=status_console,
             )
             
             if results or transcripts:

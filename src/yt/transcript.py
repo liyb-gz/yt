@@ -322,6 +322,7 @@ def process_video(
     verbose: bool = False,
     pipe_mode: bool = False,
     save_files: bool = True,
+    status_console: Console | None = None,
 ) -> tuple[dict[str, Path], list[str]]:
     """
     Process a single video: fetch transcripts for all target languages.
@@ -339,17 +340,19 @@ def process_video(
         verbose: Enable verbose output
         pipe_mode: If True, suppress status output (for piping)
         save_files: If True, save transcript files
+        status_console: Optional console for output (with logging support)
     
     Returns:
         Tuple of (dict mapping language to output file path, list of transcript contents)
     """
     from rich.console import Console
     
-    # Use stderr console in pipe mode (quiet=True suppresses output)
-    if pipe_mode:
-        status_console = Console(stderr=True, quiet=True)
-    else:
-        status_console = console
+    # Use provided console, or create one based on mode
+    if status_console is None:
+        if pipe_mode:
+            status_console = Console(stderr=True, quiet=True)
+        else:
+            status_console = console
     
     fetcher = TranscriptFetcher(
         config,

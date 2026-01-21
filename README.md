@@ -49,6 +49,7 @@ languages:
 output:
   format: srt          # srt, vtt, or txt
   pipe_mode: false     # When true, output transcript to stdout for piping
+  log_file: "~/YouTube Subtitles/yt.log"  # Log file (all verbose output)
 
 # Output directories (~ is expanded)
 storage:

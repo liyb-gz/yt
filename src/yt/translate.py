@@ -177,14 +177,15 @@ IMPORTANT RULES:
         For large files, splits into chunks to avoid token limits.
         """
         # Check if content is small enough to translate in one go
-        if len(srt_content) < 15000:  # Roughly 4k tokens
+        # 100k chars ≈ 25-30k tokens, handles most 10-20 min videos without chunking
+        if len(srt_content) < 100000:
             return self.translate(
                 srt_content, source_language, target_language, preserve_formatting=True
             )
         
         # Split into chunks by subtitle entries and translate in batches
         return self._translate_chunked(
-            srt_content, source_language, target_language, chunk_size=50
+            srt_content, source_language, target_language, chunk_size=100
         )
     
     def translate_vtt(
@@ -196,14 +197,14 @@ IMPORTANT RULES:
         """
         Translate VTT subtitle content, preserving formatting.
         """
-        # Check if content is small enough
-        if len(vtt_content) < 15000:
+        # Check if content is small enough (100k chars ≈ 25-30k tokens)
+        if len(vtt_content) < 100000:
             return self.translate(
                 vtt_content, source_language, target_language, preserve_formatting=True
             )
         
         return self._translate_chunked(
-            vtt_content, source_language, target_language, chunk_size=50
+            vtt_content, source_language, target_language, chunk_size=100
         )
     
     def translate_plain_text(

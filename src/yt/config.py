@@ -52,6 +52,7 @@ class OutputConfig:
     """Output configuration."""
     format: str = "srt"  # srt, vtt, or txt
     pipe_mode: bool = False  # When True, output transcript to stdout for piping
+    log_file: Path | None = None  # Path to log file (None = no file logging)
 
 
 @dataclass
@@ -79,9 +80,12 @@ class Config:
         
         # Parse output config
         output_data = data.get("output", {})
+        log_file_str = output_data.get("log_file")
+        log_file = expand_path(log_file_str) if log_file_str else None
         output = OutputConfig(
             format=output_data.get("format", "srt"),
             pipe_mode=output_data.get("pipe_mode", False),
+            log_file=log_file,
         )
         
         # Parse storage config
