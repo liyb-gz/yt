@@ -49,15 +49,20 @@ languages:
 output:
   format: srt          # srt, vtt, txt, or article
   filename_date: upload  # upload, request (today), or none
-  article_metadata: frontmatter  # frontmatter, header, footer, or none
   pipe_mode: false     # When true, output transcript to stdout for piping
-  log_file: "~/YouTube Subtitles/yt.log"  # Log file (all verbose output)
+  article:
+    length: original   # original, long, medium, short
+    metadata: frontmatter  # frontmatter, header, footer, none
 
 # Output directories (~ is expanded)
 storage:
   audio_dir: "~/YouTube Subtitles/Audio"
   transcript_dir: "~/YouTube Subtitles/Transcripts"
   article_dir: "~/YouTube Subtitles/Articles"
+
+# Logging
+logging:
+  file: "~/YouTube Subtitles/yt.log"  # Log file path (omit to disable)
 
 # YouTube/yt-dlp settings (optional)
 youtube:

@@ -48,13 +48,25 @@ class LLMConfig:
 
 
 @dataclass
+class ArticleConfig:
+    """Article output configuration."""
+    length: str = "original"  # original, long, medium, short
+    metadata: str = "frontmatter"  # frontmatter, header, footer, none
+
+
+@dataclass
 class OutputConfig:
     """Output configuration."""
-    format: str = "srt"  # srt, vtt, or txt
+    format: str = "srt"  # srt, vtt, txt, or article
+    filename_date: str = "upload"  # upload, request, none
     pipe_mode: bool = False  # When True, output transcript to stdout for piping
-    log_file: Path | None = None  # Path to log file (None = no file logging)
-    filename_date: str = "upload"  # "upload" = video upload date, "request" = today's date, "none" = no date prefix
-    article_metadata: str = "frontmatter"  # "frontmatter", "header", "footer", or "none"
+    article: ArticleConfig = field(default_factory=ArticleConfig)
+
+
+@dataclass
+class LoggingConfig:
+    """Logging configuration."""
+    file: Path | None = None  # Path to log file (None = no file logging)
 
 
 @dataclass
@@ -71,6 +83,7 @@ class Config:
     languages: list[str] = field(default_factory=lambda: ["en"])
     output: OutputConfig = field(default_factory=OutputConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
@@ -82,24 +95,34 @@ class Config:
         
         # Parse output config
         output_data = data.get("output", {})
-        log_file_str = output_data.get("log_file")
-        log_file = expand_path(log_file_str) if log_file_str else None
         filename_date = output_data.get("filename_date", "upload")
         if filename_date not in ("upload", "request", "none"):
             raise ValueError(
                 f"output.filename_date must be 'upload', 'request', or 'none', got '{filename_date}'"
             )
-        article_metadata = output_data.get("article_metadata", "frontmatter")
+        
+        # Parse article sub-config
+        article_data = output_data.get("article", {})
+        article_length = article_data.get("length", "original")
+        if article_length not in ("original", "long", "medium", "short"):
+            raise ValueError(
+                f"output.article.length must be 'original', 'long', 'medium', or 'short', got '{article_length}'"
+            )
+        article_metadata = article_data.get("metadata", "frontmatter")
         if article_metadata not in ("frontmatter", "header", "footer", "none"):
             raise ValueError(
-                f"output.article_metadata must be 'frontmatter', 'header', 'footer', or 'none', got '{article_metadata}'"
+                f"output.article.metadata must be 'frontmatter', 'header', 'footer', or 'none', got '{article_metadata}'"
             )
+        article = ArticleConfig(
+            length=article_length,
+            metadata=article_metadata,
+        )
+        
         output = OutputConfig(
             format=output_data.get("format", "srt"),
-            pipe_mode=output_data.get("pipe_mode", False),
-            log_file=log_file,
             filename_date=filename_date,
-            article_metadata=article_metadata,
+            pipe_mode=output_data.get("pipe_mode", False),
+            article=article,
         )
         
         # Parse storage config
@@ -109,6 +132,12 @@ class Config:
             transcript_dir=expand_path(storage_data.get("transcript_dir", "~/YouTube Subtitles/Transcripts")),
             article_dir=expand_path(storage_data.get("article_dir", "~/YouTube Subtitles/Articles")),
         )
+        
+        # Parse logging config
+        logging_data = data.get("logging", {})
+        log_file_str = logging_data.get("file")
+        log_file = expand_path(log_file_str) if log_file_str else None
+        logging_config = LoggingConfig(file=log_file)
         
         # Parse transcription config
         transcription_data = data.get("transcription", {})
@@ -151,6 +180,7 @@ class Config:
             languages=languages,
             output=output,
             storage=storage,
+            logging=logging_config,
             transcription=transcription,
             llm=llm,
             youtube=youtube,

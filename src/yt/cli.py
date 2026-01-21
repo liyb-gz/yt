@@ -87,15 +87,20 @@ languages:
 output:
   format: srt          # srt, vtt, txt, or article
   filename_date: upload  # upload = video upload date, request = today's date, none = no date prefix
-  article_metadata: frontmatter  # frontmatter, header, footer, or none
   pipe_mode: false     # When true, output transcript to stdout for piping
-  # log_file: "~/YouTube Subtitles/yt.log"  # Log file path (verbose logs always written here)
+  article:
+    length: original   # original, long, medium, short
+    metadata: frontmatter  # frontmatter, header, footer, none
 
 # Output directories (~ is expanded)
 storage:
   audio_dir: "~/YouTube Subtitles/Audio"
   transcript_dir: "~/YouTube Subtitles/Transcripts"
   article_dir: "~/YouTube Subtitles/Articles"
+
+# Logging
+logging:
+  # file: "~/YouTube Subtitles/yt.log"  # Uncomment to enable file logging
 
 # YouTube/yt-dlp settings
 youtube:
@@ -170,8 +175,8 @@ Examples:
     parser.add_argument(
         "--length",
         choices=["original", "long", "medium", "short"],
-        default="original",
-        help="Article length (only used with --format article): original, long, medium, short",
+        default=None,
+        help="Article length (only used with --format article): original, long, medium, short (default from config)",
     )
     
     parser.add_argument(
@@ -303,13 +308,20 @@ def cmd_config_show(args: argparse.Namespace) -> int:
             "languages": config.languages,
             "output": {
                 "format": config.output.format,
+                "filename_date": config.output.filename_date,
                 "pipe_mode": config.output.pipe_mode,
-                "log_file": str(config.output.log_file) if config.output.log_file else None,
+                "article": {
+                    "length": config.output.article.length,
+                    "metadata": config.output.article.metadata,
+                },
             },
             "storage": {
                 "audio_dir": str(config.storage.audio_dir),
                 "transcript_dir": str(config.storage.transcript_dir),
                 "article_dir": str(config.storage.article_dir),
+            },
+            "logging": {
+                "file": str(config.logging.file) if config.logging.file else None,
             },
             "youtube": {
                 "cookies_from_browser": config.youtube.cookies_from_browser,
@@ -390,7 +402,7 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
         return 1
     
     # Set up logging (file logging if configured)
-    setup_logging(config.output.log_file, verbose=args.verbose)
+    setup_logging(config.logging.file, verbose=args.verbose)
     
     # Determine pipe mode (flag wins over config)
     pipe_mode = args.pipe if args.pipe else config.output.pipe_mode
@@ -401,7 +413,7 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
     # Normal mode: LoggingConsole that writes to both console and log file
     if pipe_mode:
         status_console = Console(stderr=True, quiet=True)
-    elif config.output.log_file:
+    elif config.logging.file:
         status_console = LoggingConsole()
     else:
         status_console = console
@@ -456,13 +468,16 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
             status_console.print("-" * 60)
         
         try:
+            # Use CLI length if specified, otherwise fall back to config
+            article_length = args.length if args.length else config.output.article.length
+            
             results, transcripts = process_video(
                 url=url,
                 config=config,
                 youtube_client=youtube,
                 languages=languages,
                 output_format=output_format,
-                article_length=args.length,
+                article_length=article_length,
                 no_translate=args.no_translate,
                 discard_audio=args.discard_audio,
                 force=args.force,
