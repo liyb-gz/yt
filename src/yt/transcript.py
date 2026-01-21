@@ -199,7 +199,7 @@ class TranscriptFetcher:
         
         # Fall back to auto-generated, but only try common languages to avoid rate limiting
         # YouTube auto-generates captions in many languages; we prioritize widely-used ones
-        preferred_auto_langs = ["en", "en-US", "en-GB", "es", "fr", "de", "pt", "ja", "ko", "zh", "zh-Hans", "zh-Hant"]
+        preferred_auto_langs = ["en", "en-US", "en-GB",  "zh", "zh-Hans", "zh-Hant", "ja", "ko", "es", "fr", "de", "pt",]
         available_auto = list(metadata.automatic_captions.keys())
         
         # Try preferred languages first, then fall back to first available
@@ -413,55 +413,81 @@ def process_video(
             else:
                 status_console.print(f"[cyan]Fetching transcript in {lang}...[/cyan]")
         
-        # For article mode, fetch as TXT first, then generate article
-        fetch_format = OutputFormat.TXT if is_article_mode else output_format
-        
-        result = fetcher.fetch_transcript(
-            url,
-            metadata,
-            lang,
-            fetch_format,
-            no_translate,
-            discard_audio,
-        )
-        
-        if result:
-            content = result.content
-            method = result.method
+        # For article mode: get source transcript without translation, then generate article in target language
+        # This uses 1 LLM call instead of 2 (translate + article → just article with language instruction)
+        if is_article_mode:
+            # Get transcript in any available language (no translation)
+            result = fetcher.fetch_transcript(
+                url,
+                metadata,
+                lang,
+                OutputFormat.TXT,
+                no_translate=True,  # Skip LLM translation
+                discard_audio=discard_audio,
+            )
             
-            # Generate article if in article mode
-            if is_article_mode:
+            if result:
+                source_content = result.content
+                source_lang = result.source_language
+                method = result.method
+                
+                # Generate article in target language (1 LLM call handles both translation + article)
                 if not pipe_mode:
-                    status_console.print(f"[yellow]📝 Generating article ({article_length})...[/yellow]")
+                    if source_lang != lang:
+                        status_console.print(f"[yellow]📝 Generating article in {lang} from {source_lang} transcript ({article_length})...[/yellow]")
+                    else:
+                        status_console.print(f"[yellow]📝 Generating article ({article_length})...[/yellow]")
                 try:
                     content = fetcher.translation_client.generate_article(
-                        content,
+                        source_content,
                         language=lang,
                         length=article_length,
                     )
-                    method = f"{method}+article"
+                    if source_lang != lang:
+                        method = f"{method}+article({source_lang}→{lang})"
+                    else:
+                        method = f"{method}+article"
                     if not pipe_mode:
                         status_console.print(f"[green]✓ Article generated[/green]")
                 except Exception as e:
                     if not pipe_mode:
                         status_console.print(f"[red]✗ Article generation failed: {e}[/red]")
                     continue
-            
-            # Collect transcript for pipe mode (only first language)
-            if pipe_mode and not transcripts:
-                transcripts.append(content)
-            
-            # Save transcript (if enabled)
-            if save_files:
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_text(content, encoding="utf-8")
+            else:
                 if not pipe_mode:
-                    # Escape brackets in filename to prevent Rich from interpreting [en] as markup
-                    safe_name = output_path.name.replace("[", r"\[")
-                    status_console.print(f"[green]✓ Saved: {safe_name} ({method})[/green]")
-            results[lang] = output_path
+                    status_console.print(f"[red]✗ Failed to get transcript for article[/red]")
+                continue
         else:
+            # Normal mode: fetch transcript with translation if needed
+            result = fetcher.fetch_transcript(
+                url,
+                metadata,
+                lang,
+                output_format,
+                no_translate,
+                discard_audio,
+            )
+            
+            if not result:
+                if not pipe_mode:
+                    status_console.print(f"[red]✗ Failed to get transcript in {lang}[/red]")
+                continue
+            
+            content = result.content
+            method = result.method
+        
+        # Collect for pipe mode (only first language)
+        if pipe_mode and not transcripts:
+            transcripts.append(content)
+        
+        # Save file (if enabled)
+        if save_files:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(content, encoding="utf-8")
             if not pipe_mode:
-                status_console.print(f"[red]✗ Failed to get transcript in {lang}[/red]")
+                # Escape brackets in filename to prevent Rich from interpreting [en] as markup
+                safe_name = output_path.name.replace("[", r"\[")
+                status_console.print(f"[green]✓ Saved: {safe_name} ({method})[/green]")
+        results[lang] = output_path
     
     return results, transcripts
