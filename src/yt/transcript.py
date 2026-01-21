@@ -129,7 +129,7 @@ class TranscriptFetcher:
             if source_result:
                 content, source_lang, method = source_result
                 self.status_console.print(
-                    f"[yellow]🌐 Found {method} transcript in {source_lang}, translating to {target_language}...[/yellow]"
+                    f"[yellow]🌐 Found {method} transcript in {source_lang}, translating to {target_language} ({self.translation_client.model})...[/yellow]"
                 )
                 try:
                     translated = self._translate_content(content, source_lang, target_language)
@@ -149,7 +149,7 @@ class TranscriptFetcher:
             
             # Translate if needed and allowed
             if source_lang != target_language and not no_translate:
-                self.status_console.print(f"[yellow]🌐 Translating from {source_lang} to {target_language}...[/yellow]")
+                self.status_console.print(f"[yellow]🌐 Translating from {source_lang} to {target_language} ({self.translation_client.model})...[/yellow]")
                 try:
                     content = self._translate_content(content, source_lang, target_language)
                     self.status_console.print(f"[green]✓ Translation complete[/green]")
@@ -459,10 +459,11 @@ def process_video(
             # Generate article in target language (1 LLM call handles both translation + article)
             if not pipe_mode:
                 length_info = "" if article_length == "original" else f", length: {article_length}"
+                model_name = fetcher.translation_client.model
                 if source_lang != lang:
-                    status_console.print(f"[yellow]📝 Generating {lang} article from {source_lang} {method} transcript{length_info}...[/yellow]")
+                    status_console.print(f"[yellow]📝 Generating {lang} article from {source_lang} {method} transcript ({model_name}{length_info})...[/yellow]")
                 else:
-                    status_console.print(f"[yellow]📝 Generating article from {method} transcript{length_info}...[/yellow]")
+                    status_console.print(f"[yellow]📝 Generating article from {method} transcript ({model_name}{length_info})...[/yellow]")
             try:
                 content = fetcher.translation_client.generate_article(
                     source_content,

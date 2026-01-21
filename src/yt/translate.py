@@ -1,5 +1,6 @@
 """OpenAI-compatible LLM translation client."""
 
+import logging
 import re
 import time
 
@@ -305,51 +306,78 @@ IMPORTANT RULES:
             "temperature": 0.7,  # Slightly higher for creative writing
         }
         
-        try:
-            with httpx.Client(timeout=self.timeout * 2) as client:  # Longer timeout for articles
-                response = client.post(
-                    self.base_url,
-                    headers=headers,
-                    json=payload,
-                )
-            
-            response.raise_for_status()
-            result = response.json()
-            
-            # Check for content moderation / refusal
-            choice = result.get("choices", [{}])[0]
-            finish_reason = choice.get("finish_reason", "")
-            
-            if finish_reason == "content_filter":
-                raise TranslationError("LLM rejected content due to content policy")
-            
-            content = choice.get("message", {}).get("content", "")
-            
-            if not content:
-                raise TranslationError("LLM returned empty response for article")
-            
-            # Check for common refusal patterns
-            refusal_patterns = [
-                "I cannot",
-                "I'm not able to",
-                "I apologize, but I cannot",
-                "I'm sorry, but I can't",
-                "As an AI",
-            ]
-            content_start = content[:100].strip()
-            if any(pattern.lower() in content_start.lower() for pattern in refusal_patterns):
-                raise TranslationError(f"LLM refused to generate article: {content_start}...")
-            
-            return content
-        except httpx.TimeoutException as e:
-            raise TranslationError(f"Article generation timed out after {self.timeout * 2}s") from e
-        except httpx.HTTPStatusError as e:
+        last_error: TranslationError | None = None
+        
+        for attempt in range(self.max_retries):
             try:
-                error_detail = e.response.json().get("error", {}).get("message", str(e))
-            except Exception:
-                error_detail = str(e)
-            raise TranslationError(f"Article generation API error ({e.response.status_code}): {error_detail}") from e
-        except TranslationError:
-            raise  # Re-raise TranslationError as-is
-        except Exception as e:
-            raise TranslationError(f"Article generation failed: {e}") from e
+                with httpx.Client(timeout=self.timeout * 2) as client:  # Longer timeout for articles
+                    response = client.post(
+                        self.base_url,
+                        headers=headers,
+                        json=payload,
+                    )
+                
+                response.raise_for_status()
+                result = response.json()
+                
+                # Check for content moderation / refusal
+                choice = result.get("choices", [{}])[0]
+                finish_reason = choice.get("finish_reason", "")
+                
+                # Content filter - don't retry, it's deterministic
+                if finish_reason == "content_filter":
+                    raise TranslationError("LLM rejected content due to content policy")
+                
+                article_content = choice.get("message", {}).get("content", "")
+                
+                # Empty response - don't retry, model won't suddenly produce content
+                if not article_content:
+                    raise TranslationError("LLM returned empty response for article")
+                
+                # Check for common refusal patterns - don't retry, it's deterministic
+                refusal_patterns = [
+                    "I cannot",
+                    "I'm not able to",
+                    "I apologize, but I cannot",
+                    "I'm sorry, but I can't",
+                    "As an AI",
+                ]
+                content_start = article_content[:100].strip()
+                if any(pattern.lower() in content_start.lower() for pattern in refusal_patterns):
+                    raise TranslationError(f"LLM refused to generate article: {content_start}...")
+                
+                return article_content
+            except httpx.TimeoutException as e:
+                last_error = TranslationError(f"Article generation timed out after {self.timeout * 2}s")
+                last_error.__cause__ = e
+                logging.warning(f"Article generation attempt {attempt + 1}/{self.max_retries} timed out")
+            except httpx.HTTPStatusError as e:
+                try:
+                    error_detail = e.response.json().get("error", {}).get("message", str(e))
+                except Exception:
+                    error_detail = str(e)
+                last_error = TranslationError(f"Article generation API error ({e.response.status_code}): {error_detail}")
+                last_error.__cause__ = e
+                # Determine if error is retryable
+                is_provider_error = "provider" in error_detail.lower()
+                is_retryable_status = e.response.status_code in (429, 502, 503)
+                if 400 <= e.response.status_code < 500 and not is_retryable_status and not is_provider_error:
+                    # Non-retryable client error
+                    raise last_error
+                logging.warning(f"Article generation attempt {attempt + 1}/{self.max_retries} failed: {error_detail}")
+            except TranslationError:
+                # Deterministic errors (empty response, content filter, refusals) - don't retry
+                raise
+            except Exception as e:
+                last_error = TranslationError(f"Article generation failed: {e}")
+                last_error.__cause__ = e
+                logging.warning(f"Article generation attempt {attempt + 1}/{self.max_retries} failed: {e}")
+            
+            # Wait before retrying (exponential backoff: 2s, 4s, 8s, ...)
+            if attempt < self.max_retries - 1:
+                wait_time = 2 ** (attempt + 1)
+                logging.info(f"Retrying article generation in {wait_time}s...")
+                time.sleep(wait_time)
+        
+        # All retries exhausted
+        raise last_error if last_error else TranslationError("Article generation failed after retries")
