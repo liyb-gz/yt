@@ -135,15 +135,15 @@ class TranscriptFetcher:
             source_result = self._try_any_youtube_transcript(url, metadata)
             if source_result:
                 content, source_lang, method = source_result
-                if self.verbose:
-                    console.print(
-                        f"[yellow]Found {method} transcript in {source_lang}, translating to {target_language}...[/yellow]"
-                    )
+                self.status_console.print(
+                    f"[yellow]🌐 Found {method} transcript in {source_lang}, translating to {target_language}...[/yellow]"
+                )
                 try:
                     translated = self._translate_content(content, source_lang, target_language)
+                    self.status_console.print(f"[green]✓ Translation complete[/green]")
                     return self._format_result(translated, target_language, output_format, f"{method}+translated")
                 except TranslationError as e:
-                    console.print(f"[red]Translation failed: {e}[/red]")
+                    self.status_console.print(f"[red]✗ Translation failed: {e}[/red]")
                     # Fall through to Whisper as last resort
         
         # Step 4: Whisper transcription as last resort
@@ -156,13 +156,13 @@ class TranscriptFetcher:
             
             # Translate if needed and allowed
             if source_lang != target_language and not no_translate:
-                if self.verbose:
-                    console.print(f"[yellow]Translating from {source_lang} to {target_language}...[/yellow]")
+                self.status_console.print(f"[yellow]🌐 Translating from {source_lang} to {target_language}...[/yellow]")
                 try:
                     content = self._translate_content(content, source_lang, target_language)
+                    self.status_console.print(f"[green]✓ Translation complete[/green]")
                     return self._format_result(content, target_language, output_format, "whisper+translated")
                 except TranslationError as e:
-                    console.print(f"[red]Translation failed: {e}[/red]")
+                    self.status_console.print(f"[red]✗ Translation failed: {e}[/red]")
                     return None
             
             return self._format_result(content, source_lang, output_format, "whisper")

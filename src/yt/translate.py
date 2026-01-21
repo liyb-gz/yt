@@ -1,6 +1,7 @@
 """OpenAI-compatible LLM translation client."""
 
 import re
+import time
 
 import httpx
 
@@ -29,11 +30,13 @@ class TranslationClient:
         api_key: str,
         model: str = "gpt-4o",
         timeout: float = 120.0,
+        max_retries: int = 3,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        self.max_retries = max_retries
     
     def translate(
         self,
@@ -91,30 +94,76 @@ IMPORTANT RULES:
             "temperature": 0.3,  # Lower temperature for more consistent translations
         }
         
-        try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(
-                    self.base_url,
-                    headers=headers,
-                    json=payload,
-                )
-            
-            response.raise_for_status()
-            result = response.json()
-            
-            # Extract content from response
-            return result["choices"][0]["message"]["content"]
-        except httpx.TimeoutException as e:
-            raise TranslationError(f"Translation request timed out after {self.timeout}s") from e
-        except httpx.HTTPStatusError as e:
-            # Extract error message from response if possible
+        last_error: TranslationError | None = None
+        
+        for attempt in range(self.max_retries):
             try:
-                error_detail = e.response.json().get("error", {}).get("message", str(e))
-            except Exception:
-                error_detail = str(e)
-            raise TranslationError(f"Translation API error ({e.response.status_code}): {error_detail}") from e
-        except Exception as e:
-            raise TranslationError(f"Translation failed: {e}") from e
+                with httpx.Client(timeout=self.timeout) as client:
+                    response = client.post(
+                        self.base_url,
+                        headers=headers,
+                        json=payload,
+                    )
+                
+                response.raise_for_status()
+                result = response.json()
+                
+                # Check for content moderation / refusal
+                choice = result.get("choices", [{}])[0]
+                finish_reason = choice.get("finish_reason", "")
+                
+                if finish_reason == "content_filter":
+                    raise TranslationError("LLM rejected content due to content policy")
+                
+                content = choice.get("message", {}).get("content", "")
+                
+                if not content:
+                    raise TranslationError("LLM returned empty response")
+                
+                # Check for common refusal patterns
+                refusal_patterns = [
+                    "I cannot",
+                    "I'm not able to",
+                    "I apologize, but I cannot",
+                    "I'm sorry, but I can't",
+                    "As an AI",
+                ]
+                content_start = content[:100].strip()
+                if any(pattern.lower() in content_start.lower() for pattern in refusal_patterns):
+                    raise TranslationError(f"LLM refused to process content: {content_start}...")
+                
+                return content
+            except httpx.TimeoutException as e:
+                last_error = TranslationError(f"Translation request timed out after {self.timeout}s")
+                last_error.__cause__ = e
+            except httpx.HTTPStatusError as e:
+                # Extract error message from response if possible
+                try:
+                    error_detail = e.response.json().get("error", {}).get("message", str(e))
+                except Exception:
+                    error_detail = str(e)
+                last_error = TranslationError(f"Translation API error ({e.response.status_code}): {error_detail}")
+                last_error.__cause__ = e
+                # Don't retry on client errors, except for:
+                # - 429 (rate limit)
+                # - 400/401/502/503 with "provider" in error message (OpenRouter transient errors)
+                is_provider_error = "provider" in error_detail.lower()
+                is_retryable_status = e.response.status_code in (429, 502, 503)
+                if 400 <= e.response.status_code < 500 and not is_retryable_status and not is_provider_error:
+                    raise last_error
+            except TranslationError as e:
+                last_error = e
+            except Exception as e:
+                last_error = TranslationError(f"Translation failed: {e}")
+                last_error.__cause__ = e
+            
+            # Wait before retrying (exponential backoff: 2s, 4s, 8s, ...)
+            if attempt < self.max_retries - 1:
+                wait_time = 2 ** (attempt + 1)
+                time.sleep(wait_time)
+        
+        # All retries exhausted
+        raise last_error if last_error else TranslationError("Translation failed after retries")
     
     def translate_srt(
         self,
@@ -266,14 +315,40 @@ IMPORTANT RULES:
             response.raise_for_status()
             result = response.json()
             
-            return result["choices"][0]["message"]["content"]
+            # Check for content moderation / refusal
+            choice = result.get("choices", [{}])[0]
+            finish_reason = choice.get("finish_reason", "")
+            
+            if finish_reason == "content_filter":
+                raise TranslationError("LLM rejected content due to content policy")
+            
+            content = choice.get("message", {}).get("content", "")
+            
+            if not content:
+                raise TranslationError("LLM returned empty response for article")
+            
+            # Check for common refusal patterns
+            refusal_patterns = [
+                "I cannot",
+                "I'm not able to",
+                "I apologize, but I cannot",
+                "I'm sorry, but I can't",
+                "As an AI",
+            ]
+            content_start = content[:100].strip()
+            if any(pattern.lower() in content_start.lower() for pattern in refusal_patterns):
+                raise TranslationError(f"LLM refused to generate article: {content_start}...")
+            
+            return content
         except httpx.TimeoutException as e:
-            raise TranslationError(f"Article generation timed out") from e
+            raise TranslationError(f"Article generation timed out after {self.timeout * 2}s") from e
         except httpx.HTTPStatusError as e:
             try:
                 error_detail = e.response.json().get("error", {}).get("message", str(e))
             except Exception:
                 error_detail = str(e)
             raise TranslationError(f"Article generation API error ({e.response.status_code}): {error_detail}") from e
+        except TranslationError:
+            raise  # Re-raise TranslationError as-is
         except Exception as e:
             raise TranslationError(f"Article generation failed: {e}") from e
