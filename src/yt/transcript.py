@@ -416,46 +416,48 @@ def process_video(
         # For article mode: get source transcript without translation, then generate article in target language
         # This uses 1 LLM call instead of 2 (translate + article → just article with language instruction)
         if is_article_mode:
-            # Get transcript in any available language (no translation)
-            result = fetcher.fetch_transcript(
-                url,
-                metadata,
-                lang,
-                OutputFormat.TXT,
-                no_translate=True,  # Skip LLM translation
-                discard_audio=discard_audio,
-            )
+            # First try to get any available YouTube transcript (without translation)
+            source_result = fetcher._try_any_youtube_transcript(url, metadata)
             
-            if result:
-                source_content = result.content
-                source_lang = result.source_language
-                method = result.method
-                
-                # Generate article in target language (1 LLM call handles both translation + article)
-                if not pipe_mode:
-                    if source_lang != lang:
-                        status_console.print(f"[yellow]📝 Generating article in {lang} from {source_lang} transcript ({article_length})...[/yellow]")
-                    else:
-                        status_console.print(f"[yellow]📝 Generating article ({article_length})...[/yellow]")
-                try:
-                    content = fetcher.translation_client.generate_article(
-                        source_content,
-                        language=lang,
-                        length=article_length,
-                    )
-                    if source_lang != lang:
-                        method = f"{method}+article({source_lang}→{lang})"
-                    else:
-                        method = f"{method}+article"
-                    if not pipe_mode:
-                        status_console.print(f"[green]✓ Article generated[/green]")
-                except Exception as e:
-                    if not pipe_mode:
-                        status_console.print(f"[red]✗ Article generation failed: {e}[/red]")
-                    continue
+            if source_result:
+                raw_content, source_lang, method = source_result
+                # Convert to plain text format
+                source_content = fetcher._format_result(raw_content, source_lang, OutputFormat.TXT, method).content
             else:
+                # Fall back to Whisper if no YouTube captions available
                 if not pipe_mode:
-                    status_console.print(f"[red]✗ Failed to get transcript for article[/red]")
+                    status_console.print("[yellow]No YouTube captions, falling back to Whisper...[/yellow]")
+                whisper_result = fetcher._whisper_transcribe(url, metadata, discard_audio)
+                if whisper_result:
+                    raw_content, source_lang = whisper_result
+                    source_content = fetcher._format_result(raw_content, source_lang, OutputFormat.TXT, "whisper").content
+                    method = "whisper"
+                else:
+                    if not pipe_mode:
+                        status_console.print(f"[red]✗ Failed to get transcript for article[/red]")
+                    continue
+            
+            # Generate article in target language (1 LLM call handles both translation + article)
+            if not pipe_mode:
+                if source_lang != lang:
+                    status_console.print(f"[yellow]📝 Generating article in {lang} from {source_lang} transcript ({article_length})...[/yellow]")
+                else:
+                    status_console.print(f"[yellow]📝 Generating article ({article_length})...[/yellow]")
+            try:
+                content = fetcher.translation_client.generate_article(
+                    source_content,
+                    language=lang,
+                    length=article_length,
+                )
+                if source_lang != lang:
+                    method = f"{method}+article({source_lang}→{lang})"
+                else:
+                    method = f"{method}+article"
+                if not pipe_mode:
+                    status_console.print(f"[green]✓ Article generated[/green]")
+            except Exception as e:
+                if not pipe_mode:
+                    status_console.print(f"[red]✗ Article generation failed: {e}[/red]")
                 continue
         else:
             # Normal mode: fetch transcript with translation if needed
