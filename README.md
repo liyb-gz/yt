@@ -47,8 +47,9 @@ languages:
 
 # Output settings
 output:
-  format: srt          # srt, vtt, or txt
+  format: srt          # srt, vtt, txt, or article
   filename_date: upload  # upload, request (today), or none
+  article_metadata: frontmatter  # frontmatter, header, footer, or none
   pipe_mode: false     # When true, output transcript to stdout for piping
   log_file: "~/YouTube Subtitles/yt.log"  # Log file (all verbose output)
 
@@ -142,6 +143,30 @@ yt "URL" --format article --length original # Full rewrite (default)
 ```
 
 Articles are saved to `~/YouTube Subtitles/Articles/` as `.md` files.
+
+#### Article Metadata
+
+Articles can include video metadata. Configure with `output.article_metadata`:
+
+| Value | Description |
+|-------|-------------|
+| `frontmatter` | YAML frontmatter (default) - works with Obsidian, Jekyll, Hugo |
+| `header` | Visible header block with title, author, links |
+| `footer` | Source citation at the end |
+| `none` | No metadata |
+
+Example with `frontmatter`:
+```markdown
+---
+title: "Video Title"
+author: "Channel Name"
+url: https://www.youtube.com/watch?v=...
+upload_date: 2024-12-13
+request_date: 2026-01-21
+---
+
+Article content...
+```
 
 ### Language Options
 

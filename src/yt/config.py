@@ -54,6 +54,7 @@ class OutputConfig:
     pipe_mode: bool = False  # When True, output transcript to stdout for piping
     log_file: Path | None = None  # Path to log file (None = no file logging)
     filename_date: str = "upload"  # "upload" = video upload date, "request" = today's date, "none" = no date prefix
+    article_metadata: str = "frontmatter"  # "frontmatter", "header", "footer", or "none"
 
 
 @dataclass
@@ -88,11 +89,17 @@ class Config:
             raise ValueError(
                 f"output.filename_date must be 'upload', 'request', or 'none', got '{filename_date}'"
             )
+        article_metadata = output_data.get("article_metadata", "frontmatter")
+        if article_metadata not in ("frontmatter", "header", "footer", "none"):
+            raise ValueError(
+                f"output.article_metadata must be 'frontmatter', 'header', 'footer', or 'none', got '{article_metadata}'"
+            )
         output = OutputConfig(
             format=output_data.get("format", "srt"),
             pipe_mode=output_data.get("pipe_mode", False),
             log_file=log_file,
             filename_date=filename_date,
+            article_metadata=article_metadata,
         )
         
         # Parse storage config

@@ -142,3 +142,76 @@ def get_language_name(code: str) -> str:
         "lt": "Lithuanian",
     }
     return language_names.get(code, code)
+
+
+def format_article_with_metadata(
+    content: str,
+    title: str,
+    author: str,
+    video_id: str,
+    upload_date: str,
+    request_date: str,
+    style: str,
+) -> str:
+    """
+    Add metadata to article content based on the specified style.
+    
+    Args:
+        content: The article content (markdown)
+        title: Video title
+        author: Channel/uploader name
+        video_id: YouTube video ID
+        upload_date: Video upload date (YYYYMMDD or YYYY-MM-DD)
+        request_date: Date the article was requested (YYYY-MM-DD)
+        style: Metadata style: "frontmatter", "header", "footer", or "none"
+    
+    Returns:
+        Article content with metadata added
+    """
+    if style == "none":
+        return content
+    
+    # Format upload date if in YYYYMMDD format
+    if len(upload_date) == 8 and upload_date.isdigit():
+        formatted_upload = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
+    else:
+        formatted_upload = upload_date
+    
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    
+    if style == "frontmatter":
+        # YAML frontmatter
+        frontmatter = f'''---
+title: "{title}"
+author: "{author}"
+url: {url}
+upload_date: {formatted_upload}
+request_date: {request_date}
+---
+
+'''
+        return frontmatter + content
+    
+    elif style == "header":
+        # Visible header block
+        header = f'''# {title}
+
+> **Author:** {author}  
+> **Source:** [YouTube]({url})  
+> **Uploaded:** {formatted_upload} | **Requested:** {request_date}
+
+---
+
+'''
+        return header + content
+    
+    elif style == "footer":
+        # Footer with source info
+        footer = f'''
+
+---
+*Source: [{title}]({url}) by {author} (uploaded {formatted_upload})*
+'''
+        return content + footer
+    
+    return content

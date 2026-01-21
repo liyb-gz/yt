@@ -85,8 +85,9 @@ languages:
 
 # Output settings
 output:
-  format: srt          # srt, vtt, or txt
+  format: srt          # srt, vtt, txt, or article
   filename_date: upload  # upload = video upload date, request = today's date, none = no date prefix
+  article_metadata: frontmatter  # frontmatter, header, footer, or none
   pipe_mode: false     # When true, output transcript to stdout for piping
   # log_file: "~/YouTube Subtitles/yt.log"  # Log file path (verbose logs always written here)
 

@@ -11,7 +11,7 @@ from yt.formatter import OutputFormat, convert_format, parse_srt, parse_vtt, for
 from yt.translate import TranslationClient, TranslationError
 from yt.whisper import WhisperClient, segments_to_srt
 from yt.youtube import YouTubeClient, VideoMetadata
-from yt.utils import format_output_filename, format_audio_filename
+from yt.utils import format_output_filename, format_audio_filename, format_article_with_metadata
 
 
 console = Console()
@@ -469,6 +469,18 @@ def process_video(
                     language=lang,
                     length=article_length,
                 )
+                
+                # Add metadata based on config setting
+                content = format_article_with_metadata(
+                    content=content,
+                    title=metadata.title,
+                    author=metadata.uploader,
+                    video_id=metadata.id,
+                    upload_date=metadata.upload_date,
+                    request_date=date.today().strftime("%Y-%m-%d"),
+                    style=config.output.article_metadata,
+                )
+                
                 if source_lang != lang:
                     method = f"{method}+article({source_lang}→{lang})"
                 else:
