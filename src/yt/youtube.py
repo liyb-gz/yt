@@ -39,6 +39,15 @@ class SubtitleInfo:
     is_automatic: bool = False
 
 
+@dataclass
+class PlaylistInfo:
+    """Container for playlist/channel metadata."""
+    id: str
+    title: str
+    uploader: str
+    video_urls: list[str]
+
+
 class YouTubeClient:
     """yt-dlp wrapper for YouTube operations."""
     
@@ -87,6 +96,89 @@ class YouTubeClient:
         """Check if error suggests we should retry without cookies."""
         error_str = str(error)
         return any(msg in error_str for msg in COOKIE_FALLBACK_ERRORS)
+    
+    def is_playlist_or_channel(self, url: str) -> bool:
+        """
+        Check if URL is a playlist or channel (not a single video).
+        
+        Detects:
+        - Playlist URLs: /playlist?list=...
+        - Channel URLs: /@username, /channel/..., /c/..., /user/...
+        - Channel tabs: /@username/videos, /channel/.../videos
+        """
+        # Playlist URL patterns
+        if "/playlist?" in url or "list=" in url:
+            # But if it's a video URL with a playlist, it's a single video
+            # e.g., /watch?v=xxx&list=yyy should be treated as single video
+            if "/watch?" in url and "v=" in url:
+                return False
+            return True
+        
+        # Channel URL patterns
+        channel_patterns = [
+            r"youtube\.com/@[\w-]+(/videos)?/?$",
+            r"youtube\.com/channel/[\w-]+(/videos)?/?$",
+            r"youtube\.com/c/[\w-]+(/videos)?/?$",
+            r"youtube\.com/user/[\w-]+(/videos)?/?$",
+        ]
+        for pattern in channel_patterns:
+            if re.search(pattern, url):
+                return True
+        
+        return False
+    
+    def expand_playlist_or_channel(self, url: str) -> PlaylistInfo | None:
+        """
+        Extract all video URLs from a playlist or channel.
+        
+        Args:
+            url: Playlist or channel URL
+        
+        Returns:
+            PlaylistInfo with video URLs, or None if extraction fails
+        """
+        opts = self._get_base_opts()
+        opts.update({
+            "skip_download": True,
+            "extract_flat": True,  # Don't download individual video info
+            "quiet": not self.verbose,
+        })
+        
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if info is None:
+                    return None
+                
+                # Check if this is a playlist/channel (has entries)
+                entries = info.get("entries", [])
+                if not entries:
+                    return None
+                
+                # Extract video URLs from entries
+                video_urls = []
+                for entry in entries:
+                    if entry is None:
+                        continue
+                    # entry can be a dict with 'id' or 'url'
+                    video_id = entry.get("id")
+                    video_url = entry.get("url")
+                    
+                    if video_url:
+                        video_urls.append(video_url)
+                    elif video_id:
+                        video_urls.append(f"https://www.youtube.com/watch?v={video_id}")
+                
+                return PlaylistInfo(
+                    id=info.get("id", ""),
+                    title=info.get("title", "Unknown Playlist"),
+                    uploader=info.get("uploader", info.get("channel", "Unknown")),
+                    video_urls=video_urls,
+                )
+        except Exception as e:
+            if self.verbose:
+                print(f"Failed to expand playlist/channel: {e}", file=sys.stderr)
+            return None
     
     def get_metadata(self, url: str) -> VideoMetadata:
         """Fetch video metadata including available subtitles."""

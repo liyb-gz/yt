@@ -456,6 +456,27 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
         verbose=args.verbose and not pipe_mode,  # Suppress verbose in pipe mode
     )
     
+    # Expand playlist/channel URLs to individual video URLs
+    expanded_urls: list[str] = []
+    for url in urls:
+        if youtube.is_playlist_or_channel(url):
+            if not pipe_mode:
+                status_console.print(f"[cyan]📋 Expanding playlist/channel: {url}[/cyan]")
+            playlist_info = youtube.expand_playlist_or_channel(url)
+            if playlist_info and playlist_info.video_urls:
+                if not pipe_mode:
+                    status_console.print(f"[green]   Found {len(playlist_info.video_urls)} videos in \"{playlist_info.title}\"[/green]")
+                expanded_urls.extend(playlist_info.video_urls)
+            else:
+                if not pipe_mode:
+                    status_console.print(f"[yellow]   Warning: Could not extract videos from playlist/channel[/yellow]")
+                # Fall back to treating it as a single URL (might work for some edge cases)
+                expanded_urls.append(url)
+        else:
+            expanded_urls.append(url)
+    
+    urls = expanded_urls
+    
     # Process each URL
     success_count = 0
     error_count = 0
