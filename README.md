@@ -25,6 +25,27 @@ uv tool install .
 pip install .
 ```
 
+### Dependencies
+
+This tool relies on:
+
+-   **Python 3.11+**
+-   **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** – Downloads YouTube audio and extracts metadata (installed automatically)
+-   **[ffmpeg](https://ffmpeg.org/)** – Required by yt-dlp for audio extraction
+
+ffmpeg needs to be installed separately via your system package manager:
+
+```bash
+# macOS
+brew install ffmpeg
+
+# Ubuntu/Debian
+sudo apt install ffmpeg
+
+# Windows (with winget)
+winget install ffmpeg
+```
+
 ## Configuration
 
 Initialize a config file:
@@ -313,6 +334,23 @@ Examples with `filename_date: none`:
 
 -   `How AI Works [en].srt`
 -   `How AI Works [ja].srt`
+
+## Acknowledgments
+
+This project was inspired by the `yt` helper function in [Fabric](https://github.com/danielmiessler/Fabric), an open-source framework for augmenting humans using AI. While Fabric's `yt` extracts YouTube transcripts for use with AI patterns, this tool extends that concept with:
+
+-   Multi-language support with automatic translation
+-   Whisper API fallback when captions are unavailable
+-   Article generation from transcripts
+-   Organized file storage with configurable naming
+-   Flexible output formats (SRT, VTT, TXT, article)
+
+**Works great with Fabric!** Use `--pipe` mode to feed transcripts directly into Fabric patterns:
+
+```bash
+yt "URL" --pipe --format txt | fabric --pattern extract_wisdom
+yt "URL" --pipe | fabric --pattern summarize
+```
 
 ## License
 
