@@ -19,6 +19,7 @@ class StorageConfig:
     audio_dir: Path = field(default_factory=lambda: expand_path("~/YouTube Subtitles/Audio"))
     transcript_dir: Path = field(default_factory=lambda: expand_path("~/YouTube Subtitles/Transcripts"))
     article_dir: Path = field(default_factory=lambda: expand_path("~/YouTube Subtitles/Articles"))
+    discard_audio: bool = False  # Delete audio file after Whisper transcription
 
 
 @dataclass
@@ -27,6 +28,7 @@ class TranscriptionConfig:
     base_url: str = "https://api.openai.com/v1/audio/transcriptions"
     model: str = "whisper-1"
     api_key_env: str = "OPENAI_API_KEY"
+    use_whisper: str = "auto"  # auto, force, never
     
     @property
     def api_key(self) -> str | None:
@@ -131,6 +133,7 @@ class Config:
             audio_dir=expand_path(storage_data.get("audio_dir", "~/YouTube Subtitles/Audio")),
             transcript_dir=expand_path(storage_data.get("transcript_dir", "~/YouTube Subtitles/Transcripts")),
             article_dir=expand_path(storage_data.get("article_dir", "~/YouTube Subtitles/Articles")),
+            discard_audio=storage_data.get("discard_audio", False),
         )
         
         # Parse logging config
@@ -141,10 +144,16 @@ class Config:
         
         # Parse transcription config
         transcription_data = data.get("transcription", {})
+        use_whisper = transcription_data.get("use_whisper", "auto")
+        if use_whisper not in ("auto", "force", "never"):
+            raise ValueError(
+                f"transcription.use_whisper must be 'auto', 'force', or 'never', got '{use_whisper}'"
+            )
         transcription = TranscriptionConfig(
             base_url=transcription_data.get("base_url", "https://api.openai.com/v1/audio/transcriptions"),
             model=transcription_data.get("model", "whisper-1"),
             api_key_env=transcription_data.get("api_key_env", "OPENAI_API_KEY"),
+            use_whisper=use_whisper,
         )
         
         # Parse LLM config

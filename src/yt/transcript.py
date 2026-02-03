@@ -1,5 +1,6 @@
 """Transcript fetching with intelligent fallback chain."""
 
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -90,11 +91,12 @@ class TranscriptFetcher:
         output_format: OutputFormat = OutputFormat.SRT,
         no_translate: bool = False,
         discard_audio: bool = False,
+        use_whisper: str = "auto",
     ) -> TranscriptResult | None:
         """
         Fetch transcript for a video in the target language.
         
-        Uses fallback chain:
+        Uses fallback chain (when use_whisper="auto"):
         1. Try official transcript in target language
         2. Try auto-generated captions in target language
         3. Try official/auto in any language, then translate
@@ -107,10 +109,17 @@ class TranscriptFetcher:
             output_format: Desired output format (SRT, VTT, TXT)
             no_translate: If True, skip translation step
             discard_audio: If True, delete audio file after transcription
+            use_whisper: "auto" (fallback), "force" (always), "never" (skip)
         
         Returns:
             TranscriptResult or None if all methods fail
         """
+        # If force whisper, skip YouTube captions entirely
+        if use_whisper == "force":
+            if self.verbose:
+                console.print("[yellow]Forcing Whisper transcription (skipping YouTube captions)...[/yellow]")
+            return self._fetch_via_whisper(url, metadata, target_language, output_format, no_translate, discard_audio)
+        
         # Step 1: Try to get transcript directly in target language (prefer official)
         if self.verbose:
             console.print(f"[dim]Trying transcript in {target_language}...[/dim]")
@@ -137,12 +146,28 @@ class TranscriptFetcher:
                     return self._format_result(translated, target_language, output_format, f"{method}+translated")
                 except TranslationError as e:
                     self.status_console.print(f"[red]✗ Translation failed: {e}[/red]")
-                    # Fall through to Whisper as last resort
+                    # Fall through to Whisper as last resort (if allowed)
         
-        # Step 4: Whisper transcription as last resort
+        # Step 4: Whisper transcription as last resort (if allowed)
+        if use_whisper == "never":
+            self.status_console.print("[yellow]No YouTube captions available and Whisper is disabled (--use-whisper never)[/yellow]")
+            return None
+        
         if self.verbose:
             console.print("[yellow]No YouTube captions available, using Whisper transcription...[/yellow]")
         
+        return self._fetch_via_whisper(url, metadata, target_language, output_format, no_translate, discard_audio)
+    
+    def _fetch_via_whisper(
+        self,
+        url: str,
+        metadata: VideoMetadata,
+        target_language: str,
+        output_format: OutputFormat,
+        no_translate: bool,
+        discard_audio: bool,
+    ) -> TranscriptResult | None:
+        """Fetch transcript using Whisper transcription."""
         whisper_result = self._whisper_transcribe(url, metadata, discard_audio)
         if whisper_result:
             content, source_lang = whisper_result
@@ -211,6 +236,14 @@ class TranscriptFetcher:
         
         return None
     
+    def _get_whisper_cache_path(self, video_id: str) -> Path:
+        """Get the disk cache path for a Whisper transcription."""
+        return Path(tempfile.gettempdir()) / f"yt-whisper-{video_id}.srt"
+    
+    def _get_whisper_lang_cache_path(self, video_id: str) -> Path:
+        """Get the disk cache path for detected language."""
+        return Path(tempfile.gettempdir()) / f"yt-whisper-{video_id}.lang"
+    
     def _whisper_transcribe(
         self,
         url: str,
@@ -220,15 +253,32 @@ class TranscriptFetcher:
         """
         Download audio and transcribe via Whisper.
         
-        Uses cache to avoid re-transcribing the same video for multiple languages.
+        Uses both memory and disk cache to avoid re-transcribing:
+        - Memory cache: for multiple languages in same session
+        - Disk cache: for retries after LLM failures or separate runs
         
         Returns (srt_content, detected_language) or None.
         """
-        # Check cache first (avoid re-transcribing for multiple languages)
+        # Check memory cache first (fastest, within-session)
         if metadata.id in self._whisper_cache:
             if self.verbose:
-                self.status_console.print("[dim]Using cached Whisper transcription[/dim]")
+                self.status_console.print("[dim]Using cached Whisper transcription (memory)[/dim]")
             return self._whisper_cache[metadata.id]
+        
+        # Check disk cache (survives across runs)
+        cache_path = self._get_whisper_cache_path(metadata.id)
+        lang_cache_path = self._get_whisper_lang_cache_path(metadata.id)
+        if cache_path.exists() and lang_cache_path.exists():
+            try:
+                srt_content = cache_path.read_text(encoding="utf-8")
+                detected_lang = lang_cache_path.read_text(encoding="utf-8").strip()
+                if srt_content and detected_lang:
+                    self.status_console.print("[green]✓ Using cached Whisper transcription (disk)[/green]")
+                    # Also populate memory cache
+                    self._whisper_cache[metadata.id] = (srt_content, detected_lang)
+                    return (srt_content, detected_lang)
+            except Exception:
+                pass  # Cache read failed, proceed with transcription
         
         try:
             # Download audio
@@ -270,8 +320,17 @@ class TranscriptFetcher:
             detected_lang = result.language or "en"
             self.status_console.print(f"[green]✓ Whisper transcription complete (detected: {detected_lang})[/green]")
             
-            # Cache the result for other languages
+            # Cache to memory (for multiple languages in same session)
             self._whisper_cache[metadata.id] = (srt_content, detected_lang)
+            
+            # Cache to disk (survives LLM failures and retries)
+            try:
+                cache_path.write_text(srt_content, encoding="utf-8")
+                lang_cache_path.write_text(detected_lang, encoding="utf-8")
+                if self.verbose:
+                    self.status_console.print(f"[dim]Cached Whisper result to {cache_path}[/dim]")
+            except Exception:
+                pass  # Cache write failed, not critical
             
             # Clean up audio if requested
             if discard_audio and audio_path.exists():
@@ -328,6 +387,7 @@ def process_video(
     article_length: str = "original",
     no_translate: bool = False,
     discard_audio: bool = False,
+    use_whisper: str = "auto",
     force: bool = False,
     verbose: bool = False,
     pipe_mode: bool = False,
@@ -346,6 +406,7 @@ def process_video(
         article_length: Article length (for article format): original, long, medium, short
         no_translate: Skip translation
         discard_audio: Delete audio after Whisper
+        use_whisper: "auto" (fallback), "force" (always), "never" (skip)
         force: Overwrite existing files
         verbose: Enable verbose output
         pipe_mode: If True, suppress status output (for piping)
@@ -435,16 +496,28 @@ def process_video(
         # For article mode: get source transcript without translation, then generate article in target language
         # This uses 1 LLM call instead of 2 (translate + article → just article with language instruction)
         if is_article_mode:
-            # First try to get any available YouTube transcript (without translation)
-            source_result = fetcher._try_any_youtube_transcript(url, metadata)
+            source_result = None
+            
+            # If force whisper, skip YouTube captions
+            if use_whisper == "force":
+                if not pipe_mode:
+                    status_console.print("[yellow]Forcing Whisper transcription for article...[/yellow]")
+            else:
+                # Try to get any available YouTube transcript
+                source_result = fetcher._try_any_youtube_transcript(url, metadata)
             
             if source_result:
                 raw_content, source_lang, method = source_result
                 # Convert to plain text format
                 source_content = fetcher._format_result(raw_content, source_lang, OutputFormat.TXT, method).content
             else:
-                # Fall back to Whisper if no YouTube captions available
-                if not pipe_mode:
+                # Fall back to Whisper if allowed
+                if use_whisper == "never":
+                    if not pipe_mode:
+                        status_console.print("[yellow]No YouTube captions available and Whisper is disabled (--use-whisper never)[/yellow]")
+                    continue
+                
+                if not pipe_mode and use_whisper != "force":
                     status_console.print("[yellow]No YouTube captions, falling back to Whisper...[/yellow]")
                 whisper_result = fetcher._whisper_transcribe(url, metadata, discard_audio)
                 if whisper_result:
@@ -501,6 +574,7 @@ def process_video(
                 output_format,
                 no_translate,
                 discard_audio,
+                use_whisper,
             )
             
             if not result:

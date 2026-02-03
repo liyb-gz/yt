@@ -97,6 +97,7 @@ storage:
   audio_dir: "~/YouTube Subtitles/Audio"
   transcript_dir: "~/YouTube Subtitles/Transcripts"
   article_dir: "~/YouTube Subtitles/Articles"
+  discard_audio: false  # Delete audio file after Whisper transcription
 
 # Logging
 logging:
@@ -113,6 +114,7 @@ transcription:
   base_url: https://api.openai.com/v1/audio/transcriptions
   model: whisper-1
   api_key_env: OPENAI_API_KEY
+  use_whisper: auto  # auto (fallback), force (always use), never (YouTube captions only)
 
 # OpenAI-compatible Chat API for translation (used when source != target language)
 llm:
@@ -211,7 +213,13 @@ Examples:
     parser.add_argument(
         "--discard-audio",
         action="store_true",
-        help="Delete audio file after Whisper transcription",
+        help="Delete audio file after Whisper transcription (default: from config)",
+    )
+    
+    parser.add_argument(
+        "--use-whisper",
+        choices=["auto", "force", "never"],
+        help="Whisper usage: auto (fallback), force (always), never (YouTube captions only)",
     )
     
     parser.add_argument(
@@ -319,6 +327,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
                 "audio_dir": str(config.storage.audio_dir),
                 "transcript_dir": str(config.storage.transcript_dir),
                 "article_dir": str(config.storage.article_dir),
+                "discard_audio": config.storage.discard_audio,
             },
             "logging": {
                 "file": str(config.logging.file) if config.logging.file else None,
@@ -332,6 +341,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
                 "base_url": config.transcription.base_url,
                 "model": config.transcription.model,
                 "api_key_env": config.transcription.api_key_env,
+                "use_whisper": config.transcription.use_whisper,
             },
             "llm": {
                 "base_url": config.llm.base_url,
@@ -464,6 +474,20 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
             f"Translation will fail if source language differs from target.[/yellow]"
         )
     
+    # Merge use_whisper (CLI wins over config)
+    use_whisper = args.use_whisper if args.use_whisper else config.transcription.use_whisper
+    
+    # Early validation: force whisper mode requires Whisper API key
+    if use_whisper == "force" and not config.transcription.api_key:
+        status_console.print(
+            f"[red]Error: --use-whisper force requires Whisper API key. "
+            f"Set {config.transcription.api_key_env} environment variable.[/red]"
+        )
+        return 1
+    
+    # Merge discard_audio (CLI wins over config)
+    discard_audio = args.discard_audio or config.storage.discard_audio
+    
     # Create YouTube client (CLI flags override config)
     cookies_file = str(args.cookies) if args.cookies else config.youtube.cookies_file
     cookies_from_browser = args.cookies_from_browser or config.youtube.cookies_from_browser
@@ -520,7 +544,8 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
                 output_format=output_format,
                 article_length=article_length,
                 no_translate=args.no_translate,
-                discard_audio=args.discard_audio,
+                discard_audio=discard_audio,
+                use_whisper=use_whisper,
                 force=args.force,
                 verbose=args.verbose and not pipe_mode,
                 pipe_mode=pipe_mode,

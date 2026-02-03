@@ -4,14 +4,16 @@ A CLI tool to download YouTube subtitles with intelligent fallbacks and optional
 
 ## Features
 
-- **Smart fallback chain**: Official transcripts → Auto-generated captions → Whisper transcription
-- **Multi-language support**: Request subtitles in multiple languages simultaneously
-- **Automatic translation**: Translate transcripts to target languages via LLM (OpenAI-compatible)
-- **Flexible output**: SRT, VTT, or plain text formats
-- **Pipe mode**: Output to stdout for piping to other tools (like [Fabric](https://github.com/danielmiessler/Fabric))
-- **Batch processing**: Process multiple URLs from command line or file
-- **Cookie support**: Bypass YouTube restrictions using browser cookies
-- **Organized storage**: Auto-naming with video title and upload date
+-   **Smart fallback chain**: Official transcripts → Auto-generated captions → Whisper transcription
+-   **Whisper control**: Force Whisper for quality, or disable it to avoid API costs
+-   **Multi-language support**: Request subtitles in multiple languages simultaneously
+-   **Automatic translation**: Translate transcripts to target languages via LLM (OpenAI-compatible)
+-   **Flexible output**: SRT, VTT, plain text, or article formats
+-   **Pipe mode**: Output to stdout for piping to other tools (like [Fabric](https://github.com/danielmiessler/Fabric))
+-   **Batch processing**: Process multiple URLs from command line or file
+-   **Cookie support**: Bypass YouTube restrictions using browser cookies
+-   **Organized storage**: Auto-naming with video title and upload date
+-   **Smart caching**: Whisper results cached to disk for retry resilience
 
 ## Installation
 
@@ -42,45 +44,47 @@ The config file is located at `~/.config/yt/config.yaml`:
 ```yaml
 # Target languages for transcripts
 languages:
-  - en
-  - ja
+    - en
+    - ja
 
 # Output settings
 output:
-  format: srt          # srt, vtt, txt, or article
-  filename_date: upload  # upload, request (today), or none
-  pipe_mode: false     # When true, output transcript to stdout for piping
-  article:
-    length: original   # original, long, medium, short
-    metadata: frontmatter  # frontmatter, header, footer, none
+    format: srt # srt, vtt, txt, or article
+    filename_date: upload # upload, request (today), or none
+    pipe_mode: false # When true, output transcript to stdout for piping
+    article:
+        length: original # original, long, medium, short
+        metadata: frontmatter # frontmatter, header, footer, none
 
 # Output directories (~ is expanded)
 storage:
-  audio_dir: "~/YouTube Subtitles/Audio"
-  transcript_dir: "~/YouTube Subtitles/Transcripts"
-  article_dir: "~/YouTube Subtitles/Articles"
+    audio_dir: "~/YouTube Subtitles/Audio"
+    transcript_dir: "~/YouTube Subtitles/Transcripts"
+    article_dir: "~/YouTube Subtitles/Articles"
+    discard_audio: false # Delete audio after Whisper transcription
 
 # Logging
 logging:
-  file: "~/YouTube Subtitles/yt.log"  # Log file path (omit to disable)
+    file: "~/YouTube Subtitles/yt.log" # Log file path (omit to disable)
 
 # YouTube/yt-dlp settings (optional)
 youtube:
-  cookies_from_browser: chrome  # or firefox, safari, edge, brave
-  # cookies_file: ~/cookies.txt   # alternative: path to cookies.txt
-  # player_client: web            # force client: web, android, ios, tv
+    cookies_from_browser: chrome # or firefox, safari, edge, brave
+    # cookies_file: ~/cookies.txt   # alternative: path to cookies.txt
+    # player_client: web            # force client: web, android, ios, tv
 
 # OpenAI-compatible Whisper API (used when YouTube captions unavailable)
 transcription:
-  base_url: https://api.openai.com/v1/audio/transcriptions
-  model: whisper-1
-  api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1/audio/transcriptions
+    model: whisper-1
+    api_key_env: OPENAI_API_KEY
+    use_whisper: auto # auto (fallback), force (always), never (YouTube only)
 
 # OpenAI-compatible Chat API for translation
 llm:
-  base_url: https://api.openai.com/v1/chat/completions
-  model: gpt-4o
-  api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1/chat/completions
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
 ```
 
 ### Environment Variables
@@ -153,14 +157,15 @@ Articles are saved to `~/YouTube Subtitles/Articles/` as `.md` files.
 
 Articles can include video metadata. Configure with `output.article_metadata`:
 
-| Value | Description |
-|-------|-------------|
+| Value         | Description                                                    |
+| ------------- | -------------------------------------------------------------- |
 | `frontmatter` | YAML frontmatter (default) - works with Obsidian, Jekyll, Hugo |
-| `header` | Visible header block with title, author, links |
-| `footer` | Source citation at the end |
-| `none` | No metadata |
+| `header`      | Visible header block with title, author, links                 |
+| `footer`      | Source citation at the end                                     |
+| `none`        | No metadata                                                    |
 
 Example with `frontmatter`:
+
 ```markdown
 ---
 title: "Video Title"
@@ -199,10 +204,34 @@ yt "URL" --pipe --format txt | fabric --pattern extract_wisdom
 ```
 
 In pipe mode:
-- **Only the first language** is output to stdout (for clean piping)
-- Status messages go to stderr
-- Transcript content goes to stdout
-- Files are still saved for all languages (use `--no-save` to disable)
+
+-   **Only the first language** is output to stdout (for clean piping)
+-   Status messages go to stderr
+-   Transcript content goes to stdout
+-   Files are still saved for all languages (use `--no-save` to disable)
+
+### Whisper Transcription Control
+
+Control when Whisper transcription is used:
+
+```bash
+# Auto mode (default): Use YouTube captions when available, fall back to Whisper
+yt "URL" --use-whisper auto
+
+# Force mode: Always use Whisper, skip YouTube captions
+yt "URL" --use-whisper force
+
+# Never mode: Only use YouTube captions, skip video if none available
+yt "URL" --use-whisper never
+```
+
+| Mode    | Behavior                                             |
+| ------- | ---------------------------------------------------- |
+| `auto`  | Smart fallback: YouTube captions → Whisper (default) |
+| `force` | Always transcribe via Whisper API (requires API key) |
+| `never` | YouTube captions only, no API costs                  |
+
+> **Note:** Whisper transcription results are cached to disk. If translation fails afterward, retrying won't re-transcribe the audio.
 
 ### Other Options
 
@@ -227,31 +256,32 @@ yt "URL" --verbose
 
 ### Commands
 
-| Command | Description |
-|---------|-------------|
-| `yt <urls>` | Process YouTube URLs and download transcripts |
-| `yt config show` | Display current configuration (or defaults) |
-| `yt config init` | Create a new configuration file |
+| Command          | Description                                   |
+| ---------------- | --------------------------------------------- |
+| `yt <urls>`      | Process YouTube URLs and download transcripts |
+| `yt config show` | Display current configuration (or defaults)   |
+| `yt config init` | Create a new configuration file               |
 
 ### Options
 
-| Option | Description |
-|--------|-------------|
-| `urls` | YouTube URLs (positional arguments) |
-| `--input`, `-i` | File containing URLs, one per line |
-| `--config` | Path to config.yaml (default: `~/.config/yt/config.yaml`) |
-| `--format`, `-f` | Output format: `srt`, `vtt`, `txt`, or `article` |
-| `--length` | Article length: `original`, `long`, `medium`, `short` (for `--format article`) |
-| `--languages`, `-l` | Comma-separated target languages (e.g., `en,ja,ko`) |
-| `--pipe`, `-p` | Pipe mode: output transcript to stdout |
-| `--no-save` | Don't save files (only useful with `--pipe`) |
-| `--force` | Overwrite existing output files |
-| `--no-translate` | Skip translation; save only source language |
-| `--discard-audio` | Delete audio file after Whisper transcription |
-| `--cookies` | Path to cookies.txt (Netscape format) |
-| `--cookies-from-browser` | Browser to extract cookies from |
-| `--player-client` | Force YouTube client: `web`, `android`, `ios`, `tv` |
-| `--verbose`, `-v` | Enable verbose output for debugging |
+| Option                   | Description                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `urls`                   | YouTube URLs (positional arguments)                                            |
+| `--input`, `-i`          | File containing URLs, one per line                                             |
+| `--config`               | Path to config.yaml (default: `~/.config/yt/config.yaml`)                      |
+| `--format`, `-f`         | Output format: `srt`, `vtt`, `txt`, or `article`                               |
+| `--length`               | Article length: `original`, `long`, `medium`, `short` (for `--format article`) |
+| `--languages`, `-l`      | Comma-separated target languages (e.g., `en,ja,ko`)                            |
+| `--pipe`, `-p`           | Pipe mode: output transcript to stdout                                         |
+| `--no-save`              | Don't save files (only useful with `--pipe`)                                   |
+| `--force`                | Overwrite existing output files                                                |
+| `--no-translate`         | Skip translation; save only source language                                    |
+| `--discard-audio`        | Delete audio file after Whisper transcription                                  |
+| `--use-whisper`          | Whisper usage: `auto` (fallback), `force` (always), `never` (skip)             |
+| `--cookies`              | Path to cookies.txt (Netscape format)                                          |
+| `--cookies-from-browser` | Browser to extract cookies from                                                |
+| `--player-client`        | Force YouTube client: `web`, `android`, `ios`, `tv`                            |
+| `--verbose`, `-v`        | Enable verbose output for debugging                                            |
 
 ## Output Files
 
@@ -263,23 +293,26 @@ Files are saved with the naming pattern:
 
 The date prefix is controlled by the `output.filename_date` config option:
 
-| Value | Description |
-|-------|-------------|
-| `upload` | Video upload date (default) - good for archiving |
-| `request` | Today's date - good for personal knowledge management |
-| `none` | No date prefix - just `{Video Title} [{language}].{ext}` |
+| Value     | Description                                              |
+| --------- | -------------------------------------------------------- |
+| `upload`  | Video upload date (default) - good for archiving         |
+| `request` | Today's date - good for personal knowledge management    |
+| `none`    | No date prefix - just `{Video Title} [{language}].{ext}` |
 
 Examples with `filename_date: upload`:
-- `2024-10-26 - How AI Works [en].srt`
-- `2024-10-26 - How AI Works [ja].srt`
+
+-   `2024-10-26 - How AI Works [en].srt`
+-   `2024-10-26 - How AI Works [ja].srt`
 
 Examples with `filename_date: request` (assuming today is 2026-01-21):
-- `2026-01-21 - How AI Works [en].srt`
-- `2026-01-21 - How AI Works [ja].srt`
+
+-   `2026-01-21 - How AI Works [en].srt`
+-   `2026-01-21 - How AI Works [ja].srt`
 
 Examples with `filename_date: none`:
-- `How AI Works [en].srt`
-- `How AI Works [ja].srt`
+
+-   `How AI Works [en].srt`
+-   `How AI Works [ja].srt`
 
 ## License
 
