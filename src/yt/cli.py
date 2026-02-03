@@ -444,6 +444,26 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
     format_str = args.output_format if args.output_format else config.output.format
     output_format = OutputFormat.from_string(format_str)
     
+    # Early validation: article mode always requires LLM API key
+    if output_format == OutputFormat.ARTICLE and not config.llm.api_key:
+        status_console.print(
+            f"[red]Error: Article mode requires LLM API key. "
+            f"Set {config.llm.api_key_env} environment variable.[/red]"
+        )
+        return 1
+    
+    # Warning: translation likely needed but LLM key missing
+    if (
+        len(languages) > 1
+        and not args.no_translate
+        and not config.llm.api_key
+        and output_format != OutputFormat.ARTICLE  # Already checked above
+    ):
+        status_console.print(
+            f"[yellow]Warning: Multiple languages requested but LLM API key not set. "
+            f"Translation will fail if source language differs from target.[/yellow]"
+        )
+    
     # Create YouTube client (CLI flags override config)
     cookies_file = str(args.cookies) if args.cookies else config.youtube.cookies_file
     cookies_from_browser = args.cookies_from_browser or config.youtube.cookies_from_browser
