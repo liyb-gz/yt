@@ -30,7 +30,7 @@ pip install .
 This tool relies on:
 
 -   **Python 3.11+**
--   **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** – Downloads YouTube audio and extracts metadata (installed automatically)
+-   **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** – Downloads YouTube audio and extracts metadata (installed automatically; current releases are recommended)
 -   **[ffmpeg](https://ffmpeg.org/)** – Required by yt-dlp for audio extraction
 
 ffmpeg needs to be installed separately via your system package manager:
@@ -149,6 +149,8 @@ yt "URL" --cookies ~/Downloads/cookies.txt
 ```
 
 > **Note:** If cookie-authenticated requests fail (e.g., due to YouTube's JavaScript challenges), the tool automatically retries without cookies. This provides the best of both worlds—cookies work when needed, anonymous fallback when they don't.
+
+> **YouTube client fallback:** When YouTube rejects a media URL with HTTP 403, `yt` retries the audio download through the Android player client. This is automatic; `--player-client` can still be used to force a specific client.
 
 ### Output Format
 

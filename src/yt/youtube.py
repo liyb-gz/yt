@@ -17,6 +17,20 @@ COOKIE_FALLBACK_ERRORS = [
     "Sign in to confirm your age",
 ]
 
+# YouTube periodically returns 403 responses for the default web/SABR media
+# formats.  The Android client still exposes a stable muxed format that is
+# sufficient for Whisper audio extraction, so use it as a targeted fallback.
+AUDIO_CLIENT_FALLBACK_ERRORS = [
+    "HTTP Error 403",
+    "HTTP Error 429",
+    "unable to download video data",
+    "Requested format is not available",
+    "Only images are available",
+    "Audio download failed",
+]
+
+SUBTITLE_FORMAT_PREFERENCE = ("srt", "vtt", "ttml", "json3", "srv3", "srv2", "srv1")
+
 
 @dataclass
 class VideoMetadata:
@@ -68,7 +82,11 @@ class YouTubeClient:
         """Check if cookies are configured."""
         return bool(self.cookies_file or self.cookies_from_browser)
     
-    def _get_base_opts(self, use_cookies: bool = True) -> dict[str, Any]:
+    def _get_base_opts(
+        self,
+        use_cookies: bool = True,
+        player_client: str | None = None,
+    ) -> dict[str, Any]:
         """
         Get base yt-dlp options.
         
@@ -87,15 +105,27 @@ class YouTubeClient:
             if self.cookies_from_browser:
                 opts["cookiesfrombrowser"] = (self.cookies_from_browser,)
         
-        if self.player_client:
-            opts["extractor_args"] = {"youtube": {"player_client": [self.player_client]}}
+        selected_player_client = player_client or self.player_client
+        if selected_player_client:
+            opts["extractor_args"] = {"youtube": {"player_client": [selected_player_client]}}
         
         return opts
+
+    def _get_audio_player_clients(self) -> list[str | None]:
+        """Return the client order used for media downloads."""
+        if self.player_client:
+            return [self.player_client]
+        return [None, "android"]
     
     def _should_fallback(self, error: Exception) -> bool:
         """Check if error suggests we should retry without cookies."""
         error_str = str(error)
         return any(msg in error_str for msg in COOKIE_FALLBACK_ERRORS)
+
+    def _should_try_audio_client_fallback(self, error: Exception) -> bool:
+        """Check if a media error is likely fixed by another player client."""
+        error_str = str(error)
+        return any(msg in error_str for msg in AUDIO_CLIENT_FALLBACK_ERRORS)
     
     def is_playlist_or_channel(self, url: str) -> bool:
         """
@@ -182,11 +212,37 @@ class YouTubeClient:
     
     def get_metadata(self, url: str) -> VideoMetadata:
         """Fetch video metadata including available subtitles."""
-        return self._get_metadata_impl(url, use_cookies=True)
+        metadata = self._get_metadata_impl(url, use_cookies=True)
+
+        # Older yt-dlp clients can return video metadata without caption
+        # tracks. Re-query once with Android before falling back to Whisper.
+        if not self.player_client and not metadata.subtitles and not metadata.automatic_captions:
+            try:
+                android_metadata = self._get_metadata_impl(
+                    url,
+                    use_cookies=True,
+                    player_client="android",
+                )
+                if android_metadata.subtitles or android_metadata.automatic_captions:
+                    return android_metadata
+            except Exception:
+                # Keep the original metadata; the caller can still use its
+                # configured Whisper fallback if captions are unavailable.
+                pass
+
+        return metadata
     
-    def _get_metadata_impl(self, url: str, use_cookies: bool) -> VideoMetadata:
+    def _get_metadata_impl(
+        self,
+        url: str,
+        use_cookies: bool,
+        player_client: str | None = None,
+    ) -> VideoMetadata:
         """Internal metadata fetch with cookie control."""
-        opts = self._get_base_opts(use_cookies=use_cookies)
+        opts = self._get_base_opts(
+            use_cookies=use_cookies,
+            player_client=player_client,
+        )
         opts.update({
             "skip_download": True,
             "writesubtitles": False,
@@ -215,7 +271,11 @@ class YouTubeClient:
                     f"[yellow]Warning: Cookie-authenticated request failed, retrying without cookies...[/yellow]",
                     file=sys.stderr,
                 )
-                return self._get_metadata_impl(url, use_cookies=False)
+                return self._get_metadata_impl(
+                    url,
+                    use_cookies=False,
+                    player_client=player_client,
+                )
             raise
     
     def list_available_subtitles(self, metadata: VideoMetadata) -> list[SubtitleInfo]:
@@ -382,47 +442,71 @@ class YouTubeClient:
         base_name = output_path.stem
         output_template = str(output_dir / base_name)
         
-        opts = self._get_base_opts(use_cookies=use_cookies)
-        opts.update({
-            "format": "bestaudio[ext=m4a]/bestaudio/best",
-            "outtmpl": output_template + ".%(ext)s",
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "m4a",
-                "preferredquality": "192",
-            }],
-        })
-        
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([url])
-            
-            # Find the downloaded file
-            for ext in ["m4a", "mp3", "opus", "webm"]:
-                audio_path = output_dir / f"{base_name}.{ext}"
-                if audio_path.exists():
-                    return audio_path
-            
-            # If post-processing happened, look for m4a specifically
-            if output_path.exists():
-                return output_path
-            
-            raise FileNotFoundError(f"Audio download failed for {url}")
-        except Exception as e:
-            # If cookies are enabled and error suggests auth issues, retry without cookies
-            if use_cookies and self._has_cookies and self._should_fallback(e):
-                print(
-                    f"[yellow]Warning: Cookie-authenticated request failed, retrying without cookies...[/yellow]",
-                    file=sys.stderr,
-                )
-                return self._download_audio_impl(url, output_dir, filename, use_cookies=False)
-            raise
+        player_clients = self._get_audio_player_clients()
+        for attempt, player_client in enumerate(player_clients):
+            opts = self._get_base_opts(
+                use_cookies=use_cookies,
+                player_client=player_client,
+            )
+            opts.update({
+                "format": "bestaudio[ext=m4a]/bestaudio/best",
+                "outtmpl": output_template + ".%(ext)s",
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "m4a",
+                    "preferredquality": "192",
+                }],
+                # Avoid waiting through yt-dlp's long default retry cycle
+                # before trying the alternate YouTube client.
+                "retries": 1,
+                "fragment_retries": 1,
+                "extractor_retries": 2,
+                "overwrites": True,
+            })
+
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.download([url])
+
+                # Find the downloaded file
+                for ext in ["m4a", "mp3", "opus", "webm"]:
+                    audio_path = output_dir / f"{base_name}.{ext}"
+                    if audio_path.exists():
+                        return audio_path
+
+                # If post-processing happened, look for m4a specifically
+                if output_path.exists():
+                    return output_path
+
+                raise FileNotFoundError(f"Audio download failed for {url}")
+            except Exception as e:
+                # If cookies are enabled and error suggests auth issues, retry without cookies
+                if use_cookies and self._has_cookies and self._should_fallback(e):
+                    print(
+                        f"[yellow]Warning: Cookie-authenticated request failed, retrying without cookies...[/yellow]",
+                        file=sys.stderr,
+                    )
+                    return self._download_audio_impl(url, output_dir, filename, use_cookies=False)
+
+                has_next_client = attempt + 1 < len(player_clients)
+                if has_next_client and self._should_try_audio_client_fallback(e):
+                    if self.verbose:
+                        next_client = player_clients[attempt + 1] or "default"
+                        print(
+                            f"YouTube media download failed ({e}); retrying with {next_client} client...",
+                            file=sys.stderr,
+                        )
+                    continue
+                raise
+
+        raise RuntimeError(f"Audio download failed for {url}")
     
     def get_subtitle_content(
         self,
         url: str,
         language: str,
         prefer_official: bool = True,
+        metadata: VideoMetadata | None = None,
     ) -> tuple[str, bool] | None:
         """
         Get subtitle content directly without saving to file.
@@ -435,6 +519,9 @@ class YouTubeClient:
         Returns:
             Tuple of (content, is_automatic) or None if not available
         """
+        if metadata is not None:
+            return self._get_subtitle_content_from_metadata(metadata, language, prefer_official)
+
         import tempfile
         
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -448,6 +535,56 @@ class YouTubeClient:
                 return (content, is_automatic)
         
         return None
+
+    def _get_subtitle_content_from_metadata(
+        self,
+        metadata: VideoMetadata,
+        language: str,
+        prefer_official: bool,
+    ) -> tuple[str, bool] | None:
+        """Fetch one caption track directly from URLs already found in metadata."""
+        track_groups = (
+            ((metadata.subtitles, False), (metadata.automatic_captions, True))
+            if prefer_official
+            else ((metadata.automatic_captions, True), (metadata.subtitles, False))
+        )
+
+        for tracks_by_language, is_automatic in track_groups:
+            tracks = tracks_by_language.get(language, [])
+            track = self._select_subtitle_track(tracks)
+            if not track:
+                continue
+
+            track_url = track.get("url")
+            if not track_url:
+                continue
+
+            try:
+                opts = self._get_base_opts()
+                opts["retries"] = 1
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    response = ydl.urlopen(track_url)
+                    raw_content = response.read()
+                content = raw_content.decode("utf-8") if isinstance(raw_content, bytes) else str(raw_content)
+                return (_clean_subtitle_content(content), is_automatic)
+            except Exception as e:
+                if self.verbose:
+                    print(f"Failed to download {language} subtitle track: {e}", file=sys.stderr)
+
+        return None
+
+    @staticmethod
+    def _select_subtitle_track(tracks: list[dict[str, str]]) -> dict[str, str] | None:
+        """Choose a text subtitle format without asking yt-dlp to re-extract the video."""
+        available = [track for track in tracks if track.get("url")]
+        if not available:
+            return None
+
+        for preferred_ext in SUBTITLE_FORMAT_PREFERENCE:
+            for track in available:
+                if track.get("ext", "").lower() == preferred_ext:
+                    return track
+        return available[0]
 
 
 def _clean_subtitle_content(content: str) -> str:

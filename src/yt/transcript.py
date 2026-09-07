@@ -124,7 +124,12 @@ class TranscriptFetcher:
         if self.verbose:
             console.print(f"[dim]Trying transcript in {target_language}...[/dim]")
         
-        result = self._try_youtube_transcript(url, target_language, prefer_official=True)
+        result = self._try_youtube_transcript(
+            url,
+            target_language,
+            prefer_official=True,
+            metadata=metadata,
+        )
         if result:
             content, is_automatic = result
             method = "auto-generated" if is_automatic else "official"
@@ -192,13 +197,19 @@ class TranscriptFetcher:
         url: str,
         language: str,
         prefer_official: bool,
+        metadata: VideoMetadata | None = None,
     ) -> tuple[str, bool] | None:
         """
         Try to get YouTube transcript in specific language.
         
         Returns (content, is_automatic) or None.
         """
-        result = self.youtube.get_subtitle_content(url, language, prefer_official)
+        result = self.youtube.get_subtitle_content(
+            url,
+            language,
+            prefer_official,
+            metadata=metadata,
+        )
         if result:
             return result  # (content, is_automatic)
         return None
@@ -215,13 +226,31 @@ class TranscriptFetcher:
         """
         # Prefer official transcripts
         for lang in metadata.subtitles.keys():
-            result = self.youtube.get_subtitle_content(url, lang, prefer_official=True)
+            result = self.youtube.get_subtitle_content(
+                url,
+                lang,
+                prefer_official=True,
+                metadata=metadata,
+            )
             if result:
                 return (result[0], lang, "official")
         
         # Fall back to auto-generated, but only try common languages to avoid rate limiting
         # YouTube auto-generates captions in many languages; we prioritize widely-used ones
-        preferred_auto_langs = ["en", "en-US", "en-GB",  "zh", "zh-Hans", "zh-Hant", "ja", "ko", "es", "fr", "de", "pt",]
+        preferred_auto_langs = [
+            "en-US",
+            "en",
+            "en-GB",
+            "zh-Hant",
+            "zh-Hans",
+            "zh",
+            "ja",
+            "ko",
+            "es",
+            "fr",
+            "de",
+            "pt",
+        ]
         available_auto = list(metadata.automatic_captions.keys())
         
         # Try preferred languages first, then fall back to first available
@@ -230,7 +259,12 @@ class TranscriptFetcher:
             langs_to_try = available_auto[:1]  # Just try the first one
         
         for lang in langs_to_try:
-            result = self.youtube.get_subtitle_content(url, lang, prefer_official=False)
+            result = self.youtube.get_subtitle_content(
+                url,
+                lang,
+                prefer_official=False,
+                metadata=metadata,
+            )
             if result:
                 return (result[0], lang, "auto-generated")
         
