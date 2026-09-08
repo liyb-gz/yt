@@ -40,32 +40,42 @@ def format_output_filename(
     language: str,
     extension: str,
     date_prefix: str | None = None,
+    profile: str | None = None,
 ) -> str:
     """
     Format output filename according to the pattern:
-    {YYYY-MM-DD} - {Video Title} [{language}].{ext}
-    
+    {YYYY-MM-DD} - {Video Title} [{language}] [{profile}].{ext}
+
+    Profile is only appended when it is non-None and not "original".
+
     Args:
         title: Video title
         language: Language code (e.g., 'en', 'ja')
         extension: File extension without dot (e.g., 'srt', 'vtt', 'txt')
         date_prefix: Date in YYYYMMDD or YYYY-MM-DD format, or None to omit date prefix
-    
+        profile: Article length profile (e.g., 'short', 'medium', 'long').
+                 Only appended if non-None and not 'original'.
+
     Returns:
         Formatted filename
     """
     safe_title = sanitize_filename(title)
-    
+
+    # Build the language/profile suffix
+    suffix = f"[{language}]"
+    if profile is not None and profile != "original":
+        suffix += f" [{profile}]"
+
     if date_prefix is None:
-        return f"{safe_title} [{language}].{extension}"
-    
+        return f"{safe_title} {suffix}.{extension}"
+
     # Parse YYYYMMDD to YYYY-MM-DD if needed
     if len(date_prefix) == 8 and date_prefix.isdigit():
         formatted_date = f"{date_prefix[:4]}-{date_prefix[4:6]}-{date_prefix[6:8]}"
     else:
         formatted_date = date_prefix
-    
-    return f"{formatted_date} - {safe_title} [{language}].{extension}"
+
+    return f"{formatted_date} - {safe_title} {suffix}.{extension}"
 
 
 def format_audio_filename(

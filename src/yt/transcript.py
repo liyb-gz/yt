@@ -7,6 +7,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from yt.article import ArticleIdentity, find_duplicate_articles
 from yt.config import Config
 from yt.formatter import OutputFormat, convert_format, parse_srt, parse_vtt, format_srt
 from yt.translate import TranslationClient, TranslationError
@@ -491,6 +492,12 @@ def process_video(
     is_article_mode = output_format == OutputFormat.ARTICLE
     
     for lang in languages:
+        # Resolve profile for this language (article mode only)
+        if is_article_mode:
+            profile = config.output.article.resolve_length(lang, article_length)
+        else:
+            profile = None
+
         # For article mode, use .md extension and article_dir
         if is_article_mode:
             output_filename = format_output_filename(
@@ -498,6 +505,7 @@ def process_video(
                 lang,
                 "md",
                 date_prefix=date_prefix,
+                profile=profile,
             )
             output_path = config.storage.article_dir / output_filename
         else:
@@ -508,8 +516,34 @@ def process_video(
                 date_prefix=date_prefix,
             )
             output_path = config.storage.transcript_dir / output_filename
-        
-        # Check if file already exists (only matters if saving)
+
+        # Check for duplicate articles via metadata (article mode only, when dedup enabled and saving)
+        if save_files and is_article_mode and config.output.article.dedup.enabled and not force:
+            identity = ArticleIdentity(
+                video_id=metadata.id,
+                language=lang,
+                profile=profile,
+            )
+            duplicates = find_duplicate_articles(
+                config.storage.article_dir,
+                identity,
+                recursive=config.output.article.dedup.recursive,
+            )
+            if duplicates:
+                # Found matching article(s) - skip this language
+                duplicate_path = duplicates[0]  # Use first match
+                if not pipe_mode:
+                    safe_name = duplicate_path.name.replace("[", r"\[")
+                    status_console.print(
+                        f"[yellow]Skipping {lang} (profile: {profile}): duplicate found at {safe_name}[/yellow]"
+                    )
+                # Still read content for pipe mode (only first language)
+                if pipe_mode and not transcripts:
+                    transcripts.append(duplicate_path.read_text(encoding="utf-8"))
+                results[lang] = duplicate_path
+                continue
+
+        # Check if file already exists at exact path (only matters if saving)
         if save_files and output_path.exists() and not force:
             if not pipe_mode:
                 safe_name = output_path.name.replace("[", r"\[")
@@ -565,7 +599,7 @@ def process_video(
             
             # Generate article in target language (1 LLM call handles both translation + article)
             if not pipe_mode:
-                length_info = "" if article_length == "original" else f", length: {article_length}"
+                length_info = "" if profile == "original" else f", length: {profile}"
                 model_name = fetcher.translation_client.model
                 if source_lang != lang:
                     status_console.print(f"[yellow]📝 Generating {lang} article from {source_lang} {method} transcript ({model_name}{length_info})...[/yellow]")
@@ -575,9 +609,9 @@ def process_video(
                 content = fetcher.translation_client.generate_article(
                     source_content,
                     language=lang,
-                    length=article_length,
+                    length=profile,
                 )
-                
+
                 # Add metadata based on config setting
                 content = format_article_with_metadata(
                     content=content,
@@ -587,7 +621,7 @@ def process_video(
                     upload_date=metadata.upload_date,
                     request_date=date.today().strftime("%Y-%m-%d"),
                     language=lang,
-                    profile=article_length,
+                    profile=profile,
                     style=config.output.article.metadata,
                 )
                 
