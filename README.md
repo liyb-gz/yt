@@ -23,6 +23,15 @@ uv tool install .
 
 # Or with pip
 pip install .
+
+# For development (editable mode)
+uv pip install -e .
+```
+
+After updating the code, reinstall to pick up changes:
+
+```bash
+uv pip install -e .
 ```
 
 ### Dependencies
