@@ -586,6 +586,8 @@ def process_video(
                     video_id=metadata.id,
                     upload_date=metadata.upload_date,
                     request_date=date.today().strftime("%Y-%m-%d"),
+                    language=lang,
+                    profile=article_length,
                     style=config.output.article.metadata,
                 )
                 

@@ -4,6 +4,8 @@ import os
 import re
 from pathlib import Path
 
+import yaml
+
 
 def expand_path(path: str) -> Path:
     """Expand ~ and environment variables in a path."""
@@ -151,11 +153,13 @@ def format_article_with_metadata(
     video_id: str,
     upload_date: str,
     request_date: str,
+    language: str,
+    profile: str,
     style: str,
 ) -> str:
     """
     Add metadata to article content based on the specified style.
-    
+
     Args:
         content: The article content (markdown)
         title: Video title
@@ -163,35 +167,49 @@ def format_article_with_metadata(
         video_id: YouTube video ID
         upload_date: Video upload date (YYYYMMDD or YYYY-MM-DD)
         request_date: Date the article was requested (YYYY-MM-DD)
+        language: Article language code
+        profile: Article length profile (original, long, medium, short)
         style: Metadata style: "frontmatter", "header", "footer", or "none"
-    
+
     Returns:
         Article content with metadata added
     """
     if style == "none":
         return content
-    
+
     # Format upload date if in YYYYMMDD format
     if len(upload_date) == 8 and upload_date.isdigit():
         formatted_upload = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:8]}"
     else:
         formatted_upload = upload_date
-    
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    
-    if style == "frontmatter":
-        # YAML frontmatter
-        frontmatter = f'''---
-title: "{title}"
-author: "{author}"
-url: {url}
-upload_date: {formatted_upload}
-request_date: {request_date}
----
 
-'''
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    if style == "frontmatter":
+        # YAML frontmatter with enriched fields
+        frontmatter_dict = {
+            "schema_version": 1,
+            "title": title,
+            "author": author,
+            "url": url,
+            "upload_date": formatted_upload,
+            "request_date": request_date,
+            "video_id": video_id,
+            "language": language,
+            "profile": profile,
+        }
+
+        # Serialize with yaml.safe_dump (sort_keys=False, allow_unicode=True)
+        yaml_content = yaml.safe_dump(
+            frontmatter_dict,
+            sort_keys=False,
+            allow_unicode=True,
+            default_flow_style=False,
+        )
+
+        frontmatter = f"---\n{yaml_content}---\n\n"
         return frontmatter + content
-    
+
     elif style == "header":
         # Visible header block
         header = f'''# {title}
@@ -204,7 +222,7 @@ request_date: {request_date}
 
 '''
         return header + content
-    
+
     elif style == "footer":
         # Footer with source info
         footer = f'''
@@ -213,5 +231,5 @@ request_date: {request_date}
 *Source: [{title}]({url}) by {author} (uploaded {formatted_upload})*
 '''
         return content + footer
-    
+
     return content
