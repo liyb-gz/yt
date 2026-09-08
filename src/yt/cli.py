@@ -91,6 +91,15 @@ output:
   article:
     length: original   # original, long, medium, short
     metadata: frontmatter  # frontmatter, header, footer, none
+    # Optional per-language length profiles (overrides global length for specific languages)
+    # length_by_language:
+    #   en: long
+    #   ja: medium
+    #   ko: short
+    # Deduplication (only works with metadata: frontmatter)
+    dedup:
+      enabled: false   # Skip generating article if identical one exists
+      recursive: false # Search subdirectories for duplicates
 
 # Output directories (~ is expanded)
 storage:
@@ -321,6 +330,11 @@ def cmd_config_show(args: argparse.Namespace) -> int:
                 "article": {
                     "length": config.output.article.length,
                     "metadata": config.output.article.metadata,
+                    "length_by_language": config.output.article.length_by_language,
+                    "dedup": {
+                        "enabled": config.output.article.dedup.enabled,
+                        "recursive": config.output.article.dedup.recursive,
+                    },
                 },
             },
             "storage": {
@@ -533,16 +547,16 @@ def cmd_process_urls(args: argparse.Namespace) -> int:
             status_console.print("-" * 60)
         
         try:
-            # Use CLI length if specified, otherwise fall back to config
-            article_length = args.length if args.length else config.output.article.length
-            
+            # Pass args.length (including None) to process_video
+            # None means no CLI override; configuration will resolve per language
+
             results, transcripts = process_video(
                 url=url,
                 config=config,
                 youtube_client=youtube,
                 languages=languages,
                 output_format=output_format,
-                article_length=article_length,
+                article_length=args.length,
                 no_translate=args.no_translate,
                 discard_audio=discard_audio,
                 use_whisper=use_whisper,

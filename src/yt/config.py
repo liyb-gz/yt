@@ -50,10 +50,43 @@ class LLMConfig:
 
 
 @dataclass
+class ArticleDedupConfig:
+    """Article deduplication configuration."""
+    enabled: bool = False
+    recursive: bool = False
+
+
+@dataclass
 class ArticleConfig:
     """Article output configuration."""
     length: str = "original"  # original, long, medium, short
     metadata: str = "frontmatter"  # frontmatter, header, footer, none
+    length_by_language: dict[str, str] = field(default_factory=dict)
+    dedup: ArticleDedupConfig = field(default_factory=ArticleDedupConfig)
+
+    def resolve_length(self, language: str, cli_override: str | None = None) -> str:
+        """
+        Resolve article length for a given language.
+
+        Precedence order:
+        1. CLI --length override
+        2. Exact match in length_by_language
+        3. Global length setting
+
+        Args:
+            language: Target language code
+            cli_override: CLI --length argument (if provided)
+
+        Returns:
+            Resolved length profile (original, long, medium, or short)
+        """
+        if cli_override is not None:
+            return cli_override
+
+        if language in self.length_by_language:
+            return self.length_by_language[language]
+
+        return self.length
 
 
 @dataclass
@@ -115,9 +148,43 @@ class Config:
             raise ValueError(
                 f"output.article.metadata must be 'frontmatter', 'header', 'footer', or 'none', got '{article_metadata}'"
             )
+
+        # Parse length_by_language
+        length_by_language = article_data.get("length_by_language", {})
+        if length_by_language:
+            for lang, profile in length_by_language.items():
+                # Validate language key is a non-empty string
+                if not isinstance(lang, str) or not lang:
+                    raise ValueError(
+                        "Language keys in length_by_language must be non-empty strings"
+                    )
+                # Validate profile is a valid length
+                if profile not in ("original", "long", "medium", "short"):
+                    raise ValueError(
+                        f"output.article.length_by_language[{lang}] must be 'original', 'long', 'medium', or 'short', got '{profile}'"
+                    )
+
+        # Parse dedup config
+        dedup_data = article_data.get("dedup", {})
+        dedup_enabled = dedup_data.get("enabled", False)
+        dedup_recursive = dedup_data.get("recursive", False)
+
+        # Validate that dedup can only be enabled with frontmatter metadata
+        if dedup_enabled and article_metadata != "frontmatter":
+            raise ValueError(
+                "Deduplication requires output.article.metadata: frontmatter"
+            )
+
+        dedup = ArticleDedupConfig(
+            enabled=dedup_enabled,
+            recursive=dedup_recursive,
+        )
+
         article = ArticleConfig(
             length=article_length,
             metadata=article_metadata,
+            length_by_language=length_by_language,
+            dedup=dedup,
         )
         
         output = OutputConfig(
