@@ -1,6 +1,7 @@
 """Article frontmatter parsing and identity extraction."""
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import yaml
 
@@ -106,3 +107,65 @@ def frontmatter_identity(text: str) -> ArticleIdentity | None:
         language=language_str,
         profile=profile_str,
     )
+
+
+def find_duplicate_articles(
+    root: Path,
+    identity: ArticleIdentity,
+    recursive: bool = False,
+) -> list[Path]:
+    """
+    Find all articles with matching identity in a directory.
+
+    Scans markdown files in root directory (and descendants if recursive=True)
+    for articles whose frontmatter matches the given identity.
+
+    Files with malformed, incomplete, or unreadable frontmatter are silently
+    ignored and do not abort processing.
+
+    Args:
+        root: Directory to scan for articles
+        identity: Article identity to match against
+        recursive: If True, scan all descendant directories; if False, only
+                   scan direct children
+
+    Returns:
+        Sorted list of paths to articles with matching identity.
+        Empty list if root does not exist.
+    """
+    # Return empty list if root doesn't exist
+    if not root.exists():
+        return []
+
+    # Choose glob pattern based on recursive flag
+    pattern = root.rglob("*.md") if recursive else root.glob("*.md")
+
+    matches = []
+
+    for path in pattern:
+        # Skip if not a regular file (e.g., directories)
+        if not path.is_file():
+            continue
+
+        try:
+            # Read file content as UTF-8
+            text = path.read_text(encoding="utf-8")
+
+            # Extract identity from frontmatter
+            article_identity = frontmatter_identity(text)
+
+            # Check if identity matches
+            if article_identity == identity:
+                matches.append(path)
+
+        except (OSError, UnicodeDecodeError):
+            # Silently ignore files that cannot be read
+            continue
+        except Exception:
+            # Catch any other errors (e.g., from YAML parsing)
+            # and continue processing
+            continue
+
+    # Return sorted list
+    return sorted(matches)
+
