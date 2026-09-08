@@ -77,6 +77,20 @@ output:
         length: original # original, long, medium, short
         metadata: frontmatter # frontmatter, header, footer, none
 
+        # Optional: per-language length profiles
+        # Precedence: CLI --length > exact language key > global length
+        # length_by_language:
+        #   en: long       # English articles use 'long' profile
+        #   ja: medium     # Japanese articles use 'medium' profile
+        #   ko: short      # Korean articles use 'short' profile
+
+        # Deduplication: skip article generation if identical video already processed
+        # Requires metadata: frontmatter (uses video_id from frontmatter)
+        # Use --force to bypass deduplication and regenerate
+        dedup:
+            enabled: false # Skip generating article if duplicate video_id found
+            recursive: false # When true, scan subdirectories for duplicates
+
 # Output directories (~ is expanded)
 storage:
     audio_dir: "~/YouTube Subtitles/Audio"
@@ -176,6 +190,68 @@ yt "URL" --format article --length original # Full rewrite (default)
 
 Articles are saved to `~/YouTube Subtitles/Articles/` as `.md` files.
 
+#### Per-Language Article Length
+
+You can configure different length profiles for different languages using `length_by_language` in your config file:
+
+```yaml
+output:
+    article:
+        length: original # Global default
+        length_by_language:
+            en: long # English articles use 'long' profile
+            ja: medium # Japanese articles use 'medium' profile
+            ko: short # Korean articles use 'short' profile
+```
+
+**Length precedence** (highest to lowest):
+
+1. **CLI `--length` flag** - always takes precedence
+2. **Exact language match** in `length_by_language`
+3. **Global `length`** setting
+
+Example: If config has `length: original` and `length_by_language: {en: long}`, then:
+
+-   `yt "URL" --languages en` → uses `long` (exact match)
+-   `yt "URL" --languages ja` → uses `original` (global default)
+-   `yt "URL" --languages en --length short` → uses `short` (CLI override)
+
+#### Article Deduplication
+
+Prevent regenerating articles for videos you've already processed:
+
+```yaml
+output:
+    article:
+        metadata: frontmatter # Required for dedup
+        dedup:
+            enabled: true # Skip if duplicate video_id found
+            recursive: false # Search subdirectories too
+```
+
+**How it works:**
+
+-   Requires `metadata: frontmatter` to embed `video_id` in generated articles
+-   Before generating an article, scans the article directory for existing files with matching `video_id`
+-   If `recursive: true`, also searches nested subdirectories
+-   Skips generation if a duplicate is found
+-   Use `--force` to bypass deduplication and regenerate anyway
+
+**Example:**
+
+```bash
+# First run: generates article
+yt "https://www.youtube.com/watch?v=abc123" --format article
+
+# Second run: skips (duplicate detected)
+yt "https://www.youtube.com/watch?v=abc123" --format article
+
+# Force regeneration
+yt "https://www.youtube.com/watch?v=abc123" --format article --force
+```
+
+Deduplication works across all languages - if you've processed a video in English, requesting Japanese will also be skipped (same video_id).
+
 #### Article Metadata
 
 Articles can include video metadata. Configure with `output.article_metadata`:
@@ -191,15 +267,26 @@ Example with `frontmatter`:
 
 ```markdown
 ---
+schema_version: 1
 title: "Video Title"
 author: "Channel Name"
-url: https://www.youtube.com/watch?v=...
+video_id: "dQw4w9WgXcQ"
+url: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+language: en
 upload_date: 2024-12-13
 request_date: 2026-01-21
+profile: long
 ---
 
 Article content...
 ```
+
+The frontmatter includes:
+
+-   `schema_version`: Format version (currently 1)
+-   `video_id`: YouTube video ID (used for deduplication)
+-   `language`: Target language code
+-   `profile`: Article length profile used (`original`, `long`, `medium`, `short`)
 
 ### Language Options
 

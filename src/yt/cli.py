@@ -91,15 +91,20 @@ output:
   article:
     length: original   # original, long, medium, short
     metadata: frontmatter  # frontmatter, header, footer, none
-    # Optional per-language length profiles (overrides global length for specific languages)
+
+    # Optional: per-language length profiles
+    # Precedence: CLI --length > exact language key > global length
     # length_by_language:
-    #   en: long
-    #   ja: medium
-    #   ko: short
-    # Deduplication (only works with metadata: frontmatter)
+    #   en: long       # English articles use 'long' profile
+    #   ja: medium     # Japanese articles use 'medium' profile
+    #   ko: short      # Korean articles use 'short' profile
+
+    # Deduplication: skip article generation if identical video already processed
+    # Requires metadata: frontmatter (uses video_id from frontmatter)
+    # Use --force to bypass deduplication and regenerate
     dedup:
-      enabled: false   # Skip generating article if identical one exists
-      recursive: false # Search subdirectories for duplicates
+      enabled: false   # Skip generating article if duplicate video_id found
+      recursive: false # When true, scan subdirectories for duplicates
 
 # Output directories (~ is expanded)
 storage:
