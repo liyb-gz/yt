@@ -7,7 +7,7 @@ A CLI tool to download YouTube subtitles with intelligent fallbacks and optional
 -   **Smart fallback chain**: Official transcripts → Auto-generated captions → Whisper transcription
 -   **Whisper control**: Force Whisper for quality, or disable it to avoid API costs
 -   **Multi-language support**: Request subtitles in multiple languages simultaneously
--   **Automatic translation**: Translate transcripts to target languages via LLM (OpenAI-compatible)
+-   **Automatic translation**: Translate transcripts via OpenAI Chat Completions or Responses, Claude Messages, or Google Gemini
 -   **Flexible output**: SRT, VTT, plain text, or article formats
 -   **Pipe mode**: Output to stdout for piping to other tools (like [Fabric](https://github.com/danielmiessler/Fabric))
 -   **Batch processing**: Process multiple URLs from command line or file
@@ -31,6 +31,10 @@ uv pip install -e .
 After updating the code, reinstall to pick up changes:
 
 ```bash
+# For the global command (also upgrades yt-dlp)
+uv tool install --force --python python3.11 --upgrade-package yt-dlp .
+
+# For an activated development environment
 uv pip install -e .
 ```
 
@@ -124,12 +128,68 @@ transcription:
     api_key_env: OPENAI_API_KEY
     use_whisper: auto # auto (fallback), force (always), never (YouTube only)
 
-# OpenAI-compatible Chat API for translation
+# LLM API for translation and article generation
 llm:
+    api_format: chat_completions # chat_completions, responses, anthropic, gemini
     base_url: https://api.openai.com/v1/chat/completions
     model: gpt-4o
     api_key_env: OPENAI_API_KEY
+    # max_tokens: 16384 # Optional output limit; Anthropic defaults to 16384
 ```
+
+### LLM API Formats
+
+`llm.api_format` selects the request format, authentication, and response parsing
+for both translations and articles. Existing configs default to `chat_completions`,
+including OpenRouter and other compatible endpoints.
+
+Replace the `llm` block with one of these examples:
+
+```yaml
+# OpenAI Responses API
+llm:
+    api_format: responses
+    base_url: https://api.openai.com/v1/responses
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+```
+
+```yaml
+# Anthropic Claude Messages API
+llm:
+    api_format: anthropic
+    base_url: https://api.anthropic.com/v1/messages
+    model: claude-sonnet-4-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 16384
+```
+
+```yaml
+# Google Gemini native generateContent API
+llm:
+    api_format: gemini
+    base_url: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+    model: gemini-2.5-flash
+    api_key_env: GEMINI_API_KEY
+```
+
+`base_url` is the **full endpoint**, including `/responses`, `/messages`, or
+`:generateContent`. Custom providers and proxies can use their own endpoint.
+For Gemini, `{model}` is replaced with the configured model; a fixed model URL
+also works. Export the key named by `api_key_env` in your shell.
+
+You can omit `base_url`, `model`, and `api_key_env` to use the defaults shown
+for the selected format. For example, `llm: {api_format: gemini}` is sufficient.
+When switching formats in an existing config, update or remove those three
+settings as well; explicit values always take precedence.
+
+`max_tokens` sets the output limit using each API's native field. Anthropic
+requires a limit and defaults to 16384; other formats use the provider's default
+when omitted. Increase it within your model's supported range for long articles.
+Truncated, blocked, and empty responses produce an error instead of saving
+incomplete content. Responses requests use the model's default temperature for
+compatibility with reasoning models. Whisper transcription still uses its
+separate `transcription` settings.
 
 ### Environment Variables
 

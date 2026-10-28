@@ -1,4 +1,4 @@
-"""OpenAI-compatible LLM translation client."""
+"""Multi-format LLM client for translation and article generation."""
 
 import logging
 import re
@@ -6,6 +6,8 @@ import time
 
 import httpx
 
+from yt.config import LLMConfig
+from yt.llm import LLMResponseError, build_request, extract_text
 from yt.utils import get_language_name
 
 
@@ -16,13 +18,7 @@ class TranslationError(Exception):
 
 class TranslationClient:
     """
-    Generic OpenAI-compatible chat client for translation.
-    
-    Works with:
-    - OpenAI
-    - OpenRouter
-    - Ollama
-    - Any OpenAI-compatible chat completions endpoint
+    LLM client supporting Chat Completions, Responses, Claude, and Gemini.
     """
     
     def __init__(
@@ -32,7 +28,12 @@ class TranslationClient:
         model: str = "gpt-4o",
         timeout: float = 120.0,
         max_retries: int = 3,
+        api_format: str = "chat_completions",
+        max_tokens: int | None = None,
     ):
+        self.config = LLMConfig(
+            base_url=base_url, model=model, api_format=api_format, max_tokens=max_tokens,
+        )
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -81,19 +82,9 @@ IMPORTANT RULES:
 3. Do not add any explanations or notes
 4. Output ONLY the translated content, nothing else"""
         
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text},
-            ],
-            "temperature": 0.3,  # Lower temperature for more consistent translations
-        }
+        url, headers, payload = build_request(
+            self.config, self.api_key, system_prompt, text, temperature=0.3,
+        )
         
         last_error: TranslationError | None = None
         
@@ -101,7 +92,7 @@ IMPORTANT RULES:
             try:
                 with httpx.Client(timeout=self.timeout) as client:
                     response = client.post(
-                        self.base_url,
+                        url,
                         headers=headers,
                         json=payload,
                     )
@@ -109,17 +100,7 @@ IMPORTANT RULES:
                 response.raise_for_status()
                 result = response.json()
                 
-                # Check for content moderation / refusal
-                choice = result.get("choices", [{}])[0]
-                finish_reason = choice.get("finish_reason", "")
-                
-                if finish_reason == "content_filter":
-                    raise TranslationError("LLM rejected content due to content policy")
-                
-                content = choice.get("message", {}).get("content", "")
-                
-                if not content:
-                    raise TranslationError("LLM returned empty response")
+                content = extract_text(result, self.config.api_format)
                 
                 # Check for common refusal patterns
                 refusal_patterns = [
@@ -154,6 +135,8 @@ IMPORTANT RULES:
                     raise last_error
             except TranslationError as e:
                 last_error = e
+            except LLMResponseError as e:
+                raise TranslationError(str(e)) from e
             except Exception as e:
                 last_error = TranslationError(f"Translation failed: {e}")
                 last_error.__cause__ = e
@@ -292,19 +275,9 @@ IMPORTANT RULES:
                 f"**Article Specifications:**\n*   [Language]: {language_name}\n\n**Instructions:**"
             )
         
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content},
-            ],
-            "temperature": 0.7,  # Slightly higher for creative writing
-        }
+        url, headers, payload = build_request(
+            self.config, self.api_key, system_prompt, content, temperature=0.7,
+        )
         
         last_error: TranslationError | None = None
         
@@ -312,7 +285,7 @@ IMPORTANT RULES:
             try:
                 with httpx.Client(timeout=self.timeout * 2) as client:  # Longer timeout for articles
                     response = client.post(
-                        self.base_url,
+                        url,
                         headers=headers,
                         json=payload,
                     )
@@ -320,19 +293,7 @@ IMPORTANT RULES:
                 response.raise_for_status()
                 result = response.json()
                 
-                # Check for content moderation / refusal
-                choice = result.get("choices", [{}])[0]
-                finish_reason = choice.get("finish_reason", "")
-                
-                # Content filter - don't retry, it's deterministic
-                if finish_reason == "content_filter":
-                    raise TranslationError("LLM rejected content due to content policy")
-                
-                article_content = choice.get("message", {}).get("content", "")
-                
-                # Empty response - don't retry, model won't suddenly produce content
-                if not article_content:
-                    raise TranslationError("LLM returned empty response for article")
+                article_content = extract_text(result, self.config.api_format)
                 
                 # Check for common refusal patterns - don't retry, it's deterministic
                 refusal_patterns = [
@@ -368,6 +329,8 @@ IMPORTANT RULES:
             except TranslationError:
                 # Deterministic errors (empty response, content filter, refusals) - don't retry
                 raise
+            except LLMResponseError as e:
+                raise TranslationError(str(e)) from e
             except Exception as e:
                 last_error = TranslationError(f"Article generation failed: {e}")
                 last_error.__cause__ = e

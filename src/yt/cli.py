@@ -130,11 +130,15 @@ transcription:
   api_key_env: OPENAI_API_KEY
   use_whisper: auto  # auto (fallback), force (always use), never (YouTube captions only)
 
-# OpenAI-compatible Chat API for translation (used when source != target language)
+# LLM API for translation and article generation
 llm:
+  api_format: chat_completions  # chat_completions, responses, anthropic, gemini
+  # Omit base_url, model, and api_key_env to use defaults for the selected format.
+  # base_url is the full endpoint; Gemini supports {model} in the URL.
   base_url: https://api.openai.com/v1/chat/completions
   model: gpt-4o
   api_key_env: OPENAI_API_KEY
+  # max_tokens: 16384  # Optional output limit; Anthropic defaults to 16384.
 """
 
 
@@ -363,9 +367,11 @@ def cmd_config_show(args: argparse.Namespace) -> int:
                 "use_whisper": config.transcription.use_whisper,
             },
             "llm": {
+                "api_format": config.llm.api_format,
                 "base_url": config.llm.base_url,
                 "model": config.llm.model,
                 "api_key_env": config.llm.api_key_env,
+                "max_tokens": config.llm.max_tokens,
             },
         }
         yaml_content = yaml.dump(defaults, default_flow_style=False, sort_keys=False)

@@ -12,6 +12,23 @@ from yt.utils import expand_path
 
 DEFAULT_CONFIG_PATH = Path("~/.config/yt/config.yaml")
 
+# Full endpoints, model defaults, and key variables for each wire format.
+LLM_API_DEFAULTS = {
+    "chat_completions": (
+        "https://api.openai.com/v1/chat/completions", "gpt-4o", "OPENAI_API_KEY",
+    ),
+    "responses": (
+        "https://api.openai.com/v1/responses", "gpt-4o", "OPENAI_API_KEY",
+    ),
+    "anthropic": (
+        "https://api.anthropic.com/v1/messages", "claude-sonnet-4-5", "ANTHROPIC_API_KEY",
+    ),
+    "gemini": (
+        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "gemini-2.5-flash", "GEMINI_API_KEY",
+    ),
+}
+
 
 @dataclass
 class StorageConfig:
@@ -38,10 +55,29 @@ class TranscriptionConfig:
 
 @dataclass
 class LLMConfig:
-    """LLM translation API configuration."""
-    base_url: str = "https://api.openai.com/v1/chat/completions"
-    model: str = "gpt-4o"
-    api_key_env: str = "OPENAI_API_KEY"
+    """LLM translation and article API configuration."""
+    base_url: str = ""
+    model: str = ""
+    api_key_env: str = ""
+    api_format: str = "chat_completions"
+    max_tokens: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.api_format, str) or self.api_format not in LLM_API_DEFAULTS:
+            raise ValueError(
+                f"llm.api_format must be one of {', '.join(LLM_API_DEFAULTS)}, "
+                f"got '{self.api_format}'"
+            )
+        defaults = LLM_API_DEFAULTS[self.api_format]
+        self.base_url = self.base_url or defaults[0]
+        self.model = self.model or defaults[1]
+        self.api_key_env = self.api_key_env or defaults[2]
+        if self.max_tokens is not None and (
+            isinstance(self.max_tokens, bool)
+            or not isinstance(self.max_tokens, int)
+            or self.max_tokens <= 0
+        ):
+            raise ValueError("llm.max_tokens must be a positive integer or null")
     
     @property
     def api_key(self) -> str | None:
@@ -204,7 +240,7 @@ class Config:
         )
         
         # Parse logging config
-        logging_data = data.get("logging", {})
+        logging_data = data.get("logging") or {}
         log_file_str = logging_data.get("file")
         log_file = expand_path(log_file_str) if log_file_str else None
         logging_config = LoggingConfig(file=log_file)
@@ -226,13 +262,15 @@ class Config:
         # Parse LLM config
         llm_data = data.get("llm", {})
         llm = LLMConfig(
-            base_url=llm_data.get("base_url", "https://api.openai.com/v1/chat/completions"),
-            model=llm_data.get("model", "gpt-4o"),
-            api_key_env=llm_data.get("api_key_env", "OPENAI_API_KEY"),
+            base_url=llm_data.get("base_url", ""),
+            model=llm_data.get("model", ""),
+            api_key_env=llm_data.get("api_key_env", ""),
+            api_format=llm_data.get("api_format", "chat_completions"),
+            max_tokens=llm_data.get("max_tokens"),
         )
         
         # Parse YouTube config
-        youtube_data = data.get("youtube", {})
+        youtube_data = data.get("youtube") or {}
         cookies_from_browser = youtube_data.get("cookies_from_browser")
         
         # Validate cookies_from_browser is a browser name, not a boolean
