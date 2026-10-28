@@ -109,6 +109,47 @@ def test_default_config_path(monkeypatch, capsys, make_config):
     assert str(path) in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("api_format", RESULTS)
+@pytest.mark.parametrize("rejected", [False, True])
+def test_thinking_diagnostics(monkeypatch, capsys, make_config, api_format, rejected):
+    path = make_config(api_format, thinking="Max")
+    original_config = path.read_text()
+    payloads = []
+
+    def handler(request):
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        if len(payloads) == 1:
+            if api_format == "chat_completions":
+                assert payload["reasoning_effort"] == "max"
+            elif api_format == "responses":
+                assert payload["reasoning"] == {"effort": "max"}
+            elif api_format == "anthropic":
+                assert payload["thinking"] == {"type": "adaptive"}
+                assert payload["output_config"] == {"effort": "max"}
+            else:
+                assert payload["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "MAX"}
+            if rejected:
+                return httpx.Response(400, json={"error": {"message": (
+                    "Unsupported thinking effort: secret-test-key https://user:pass@proxy.example/?key=hidden"
+                )}})
+        assert len(payloads) <= 2
+        return httpx.Response(200, json=RESULTS[api_format])
+
+    mock_http(monkeypatch, handler)
+    assert main(["--test", "--config", str(path)]) == 0
+    captured = capsys.readouterr()
+    assert "Thinking: max" in captured.out
+    assert f"Effective thinking: {'auto' if rejected else 'max'}" in captured.out
+    assert ("retrying with auto" in captured.out) == rejected
+    assert "LLM test passed" in captured.out
+    assert len(payloads) == (2 if rejected else 1)
+    assert not captured.err
+    assert "secret-test-key" not in captured.out
+    assert "hidden" not in captured.out
+    assert path.read_text() == original_config
+
+
 @pytest.mark.parametrize("key", [None, "", "   "])
 def test_missing_api_key_stops_before_network(monkeypatch, capsys, make_config, key):
     path = make_config()

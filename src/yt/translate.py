@@ -2,12 +2,15 @@
 
 import logging
 import re
+import sys
 import time
+from dataclasses import replace
+from typing import Callable
 
 import httpx
 
 from yt.config import LLMConfig
-from yt.llm import LLMResponseError, build_request, extract_text
+from yt.llm import LLMResponseError, build_request, extract_text, is_thinking_rejection
 from yt.utils import get_language_name
 
 
@@ -30,34 +33,57 @@ class TranslationClient:
         max_retries: int = 3,
         api_format: str | None = "auto",
         max_tokens: int | None = None,
+        thinking: str | None = "auto",
+        on_warning: Callable[[str], None] | None = None,
     ):
         self.config = LLMConfig(
             base_url=base_url, model=model, api_format=api_format, max_tokens=max_tokens,
+            thinking=thinking,
         )
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+        self.effective_thinking = self.config.thinking
+        self.on_warning = on_warning
 
     def _request(self, system_prompt: str, text: str, timeout: float) -> str:
-        """Send and parse one request using the configured native API format."""
-        url, headers, payload = build_request(
-            self.config, self.api_key, system_prompt, text,
-        )
+        """Send a request, retrying once with auto if thinking is rejected."""
         with httpx.Client(timeout=timeout) as client:
-            response = client.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        try:
-            result = response.json()
-        except ValueError as error:
-            raise LLMResponseError("LLM returned invalid JSON") from error
-        if not isinstance(result, dict):
-            raise LLMResponseError("LLM returned invalid JSON: expected an object")
-        return extract_text(result, self.config.resolved_api_format)
+            while True:
+                request_config = replace(self.config, thinking=self.effective_thinking)
+                url, headers, payload = build_request(
+                    request_config, self.api_key, system_prompt, text,
+                )
+                response = client.post(url, headers=headers, json=payload)
+                try:
+                    result = response.json()
+                except ValueError as error:
+                    response.raise_for_status()
+                    raise LLMResponseError("LLM returned invalid JSON") from error
+                if (
+                    self.effective_thinking != "auto"
+                    and response.status_code in (200, 400, 422)
+                    and is_thinking_rejection(result)
+                ):
+                    self.effective_thinking = "auto"
+                    message = (
+                        f"llm.thinking={self.config.thinking!r} was rejected by the model/API; "
+                        "retrying with auto."
+                    )
+                    if self.on_warning is not None:
+                        self.on_warning(message)
+                    else:
+                        print(f"Warning: {message}", file=sys.stderr)
+                    continue
+                response.raise_for_status()
+                if not isinstance(result, dict):
+                    raise LLMResponseError("LLM returned invalid JSON: expected an object")
+                return extract_text(result, self.config.resolved_api_format)
 
     def test_connection(self) -> str:
-        """Check the configured API with one small request and no retries."""
+        """Check the API without normal retries; allow the thinking fallback."""
         return self._request(
             "This is an API connection test. Reply with OK only.",
             "Confirm that the connection works.",

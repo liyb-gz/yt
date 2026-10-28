@@ -30,6 +30,8 @@ LLM_API_DEFAULTS = {
     ),
 }
 
+THINKING_EFFORTS = ("auto", "off", "low", "medium", "high", "xhigh", "max")
+
 
 @dataclass
 class StorageConfig:
@@ -62,6 +64,7 @@ class LLMConfig:
     api_key_env: str = ""
     api_format: str | None = "auto"
     max_tokens: int | None = None
+    thinking: str | None = "auto"
 
     def __post_init__(self) -> None:
         if self.api_format is None:
@@ -85,6 +88,15 @@ class LLMConfig:
             or self.max_tokens <= 0
         ):
             raise ValueError("llm.max_tokens must be a positive integer or null")
+        # PyYAML treats an unquoted `off` as False (YAML 1.1).
+        if self.thinking is False:
+            self.thinking = "off"
+        elif self.thinking is None:
+            self.thinking = "auto"
+        elif isinstance(self.thinking, str):
+            self.thinking = self.thinking.strip().lower() or "auto"
+        if not isinstance(self.thinking, str) or self.thinking not in THINKING_EFFORTS:
+            raise ValueError(f"llm.thinking must be one of {', '.join(THINKING_EFFORTS)}")
 
     @property
     def resolved_api_format(self) -> str:
@@ -289,6 +301,7 @@ class Config:
             api_key_env=llm_data.get("api_key_env", ""),
             api_format=llm_data.get("api_format", "auto"),
             max_tokens=llm_data.get("max_tokens"),
+            thinking=llm_data.get("thinking", "auto"),
         )
         
         # Parse YouTube config

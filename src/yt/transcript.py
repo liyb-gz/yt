@@ -83,6 +83,7 @@ class TranscriptFetcher:
                 model=self.config.llm.model,
                 api_format=self.config.llm.api_format,
                 max_tokens=self.config.llm.max_tokens,
+                thinking=self.config.llm.thinking,
             )
         return self._translation_client
     

@@ -145,6 +145,8 @@ llm:
   base_url: https://api.openai.com/v1/chat/completions
   model: gpt-4o
   api_key_env: OPENAI_API_KEY
+  thinking: auto  # auto, off, low, medium, high, xhigh, max (case-insensitive)
+  # Unsupported thinking settings warn and retry with auto (model defaults).
   # max_tokens: 16384  # Optional output limit; Anthropic defaults to 16384.
 """
 
@@ -387,6 +389,7 @@ def cmd_config_show(args: argparse.Namespace) -> int:
                 "model": config.llm.model,
                 "api_key_env": config.llm.api_key_env,
                 "max_tokens": config.llm.max_tokens,
+                "thinking": config.llm.thinking,
             },
         }
         yaml_content = yaml.dump(defaults, default_flow_style=False, sort_keys=False)
@@ -459,6 +462,7 @@ def cmd_test_llm(args: argparse.Namespace) -> int:
         report(f"Config: {config_path}" + (" (defaults)" if not config_path.exists() else ""))
         report(f"API format: {config.llm.resolved_api_format} ({config.llm.api_format})")
         report(f"Model: {config.llm.model}")
+        report(f"Thinking: {config.llm.thinking}")
         # Use the shared builder to display the resolved Gemini model URL.
         endpoint, _, _ = build_request(config.llm, "", "", "")
         report(f"Endpoint: {endpoint}")
@@ -472,10 +476,13 @@ def cmd_test_llm(args: argparse.Namespace) -> int:
             model=config.llm.model,
             api_format=config.llm.api_format,
             max_tokens=config.llm.max_tokens,
+            thinking=config.llm.thinking,
+            on_warning=lambda message: report(f"Warning: {message}"),
         )
         report("Sending a small live request...")
         started = time.perf_counter()
         content = client.test_connection()
+        report(f"Effective thinking: {client.effective_thinking}")
         report(f"LLM test passed ({time.perf_counter() - started:.2f}s)")
         preview = " ".join(content.split())
         report(f"Response: {preview[:200]}" + ("..." if len(preview) > 200 else ""))

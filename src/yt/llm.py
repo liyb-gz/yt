@@ -1,5 +1,6 @@
 """Request and response adapters for supported LLM HTTP APIs."""
 
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -63,7 +64,66 @@ def build_request(
         if config.max_tokens is not None:
             payload["max_tokens"] = config.max_tokens
 
+    effort = config.thinking
+    if effort != "auto":
+        if api_format == "gemini":
+            payload["generationConfig"]["thinkingConfig"] = (
+                {"thinkingBudget": 0} if effort == "off" else {"thinkingLevel": effort.upper()}
+            )
+        elif api_format == "anthropic":
+            if effort == "off":
+                payload["thinking"] = {"type": "disabled"}
+            else:
+                payload["thinking"] = {"type": "adaptive"}
+                payload["output_config"] = {"effort": effort}
+        elif api_format == "responses":
+            payload["reasoning"] = {"effort": "none" if effort == "off" else effort}
+        else:
+            payload["reasoning_effort"] = "none" if effort == "off" else effort
+
     return url, headers, payload
+
+
+def is_thinking_rejection(result: Any) -> bool:
+    """Recognize validation errors about thinking controls, never successful text."""
+    if not isinstance(result, dict) or not result.get("error"):
+        return False
+    error = result["error"]
+    if isinstance(error, str):
+        detail = error
+    elif isinstance(error, dict):
+        category = f"{error.get('type', '')} {error.get('code', '')}".lower()
+        if re.search(r"auth|permission|rate.?limit|quota|not.?found|server", category):
+            return False
+        if str(error.get("code", "")) in {"401", "403", "404", "429", "500", "502", "503"}:
+            return False
+        # Include structured validation details (e.g. Google's fieldViolations),
+        # but never use this backend text in the warning shown to users.
+        detail = str({key: error[key] for key in ("message", "param", "type", "code", "details") if key in error})
+    else:
+        return False
+    if re.search(
+        r"(?:invalid|incorrect|missing|expired)[ _-]+(?:api[ _-]*)?key|"
+        r"unauthorized|authentication[ _-]+failed|permission[ _-]+denied|"
+        r"quota[ _-]+(?:exceeded|exhausted)|rate[ _-]+limit|"
+        r"(?:unknown|unsupported)[ _-]+model|"
+        r"model[^\n]*?(?:not[ _-]+found|does[ _-]+not[ _-]+exist)",
+        detail, re.IGNORECASE,
+    ):
+        return False
+    mentions_control = re.search(
+        r"\b(?:reasoning(?:[_.\s-]*effort)?|thinking(?:[_.\s-]*(?:config|level|budget))?|effort)\b",
+        detail, re.IGNORECASE,
+    )
+    rejects_control = re.search(
+        r"unsupported|not[ _-]+supported|does(?:[ _-]+not|n't)[ _-]+support|"
+        r"unknown|unrecognized|invalid|not[ _-]+(?:allowed|permitted)|"
+        r"must[ _-]+be|only[ _-]+(?:supports?|accepts?|allowed)|"
+        r"extra[ _-]+(?:inputs?|fields?)|input[ _-]+should[ _-]+be|"
+        r"unexpected|cannot|can't|requires?|expected",
+        detail, re.IGNORECASE,
+    )
+    return bool(mentions_control and rejects_control)
 
 
 def extract_text(result: dict[str, Any], api_format: str) -> str:

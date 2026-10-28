@@ -134,6 +134,7 @@ llm:
     base_url: https://api.openai.com/v1/chat/completions
     model: gpt-4o
     api_key_env: OPENAI_API_KEY
+    thinking: auto # auto, off, low, medium, high, xhigh, max
     # max_tokens: 16384 # Optional output limit; Anthropic defaults to 16384
 ```
 
@@ -213,6 +214,33 @@ incomplete content. All API formats use the model's default temperature for
 compatibility with models that reject or ignore custom temperatures. Whisper
 transcription still uses its separate `transcription` settings.
 
+### Thinking Effort
+
+Set `llm.thinking` to `auto`, `off`, `low`, `medium`, `high`, `xhigh`, or `max`.
+Values are case-insensitive (`Max` works). Omitting it or using an empty/null
+value means `auto`, which leaves thinking controls to the model's defaults.
+`off` requests that thinking be disabled; models that require thinking may reject it.
+
+```yaml
+llm:
+    thinking: high
+```
+
+The setting applies to translations, article generation, and `yt --test`.
+Chat Completions uses `reasoning_effort`; Responses uses `reasoning.effort`
+(`off` becomes `none` for both). Claude uses adaptive thinking with
+`output_config.effort`, or `thinking.type: disabled` for `off`. Gemini uses
+`generationConfig.thinkingConfig.thinkingLevel`, or `thinkingBudget: 0` for `off`.
+Support varies by model, API version, and proxy; effort levels are passed through
+without converting `max` to `xhigh` or choosing a lower level.
+
+If the API returns a validation error rejecting the thinking setting, `yt` warns
+and retries once with `auto`. Subsequent requests through that client use `auto`;
+your config file stays unchanged. Other errors follow the usual error handling.
+Older Claude and Gemini APIs that require token budgets instead of effort levels
+may also fall back to `auto`. Thinking can increase latency and token usage, and
+some models count thinking tokens toward `max_tokens`.
+
 ### Environment Variables
 
 Export your API keys before running:
@@ -229,13 +257,15 @@ yt --test --config another-config.yaml
 ```
 
 This sends one small live request through the same API client used for translations
-and articles. It reports the resolved API format, model, endpoint, response time,
-and a short response preview. API key values, URL credentials, and URL query
-parameters are hidden in the diagnostics.
+and articles. It reports the resolved API format, model, thinking setting,
+endpoint, response time, and a short response preview. API key values, URL
+credentials, and URL query parameters are hidden in the diagnostics.
 
-The test uses your configured model and output limit without retries. It needs
-no YouTube URL and does not download videos or write articles, transcripts, or
-logs. It uses the provider's API quota. A successful request with usable response
+The test uses your configured model, thinking setting, and output limit. It allows
+the single thinking fallback described above and reports the effective setting;
+other failures are not retried. It needs no YouTube URL and does not download
+videos or write articles, transcripts, or logs. It uses the provider's API quota.
+A successful request with usable response
 text exits with `0`; configuration, authentication, network, or response errors
 exit with `1`. Combining `--test` with a URL or `--input` is a usage error (`2`).
 
