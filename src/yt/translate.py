@@ -39,6 +39,30 @@ class TranslationClient:
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+
+    def _request(self, system_prompt: str, text: str, timeout: float) -> str:
+        """Send and parse one request using the configured native API format."""
+        url, headers, payload = build_request(
+            self.config, self.api_key, system_prompt, text,
+        )
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        try:
+            result = response.json()
+        except ValueError as error:
+            raise LLMResponseError("LLM returned invalid JSON") from error
+        if not isinstance(result, dict):
+            raise LLMResponseError("LLM returned invalid JSON: expected an object")
+        return extract_text(result, self.config.resolved_api_format)
+
+    def test_connection(self) -> str:
+        """Check the configured API with one small request and no retries."""
+        return self._request(
+            "This is an API connection test. Reply with OK only.",
+            "Confirm that the connection works.",
+            timeout=self.timeout,
+        )
     
     def translate(
         self,
@@ -82,25 +106,11 @@ IMPORTANT RULES:
 3. Do not add any explanations or notes
 4. Output ONLY the translated content, nothing else"""
         
-        url, headers, payload = build_request(
-            self.config, self.api_key, system_prompt, text,
-        )
-        
         last_error: TranslationError | None = None
         
         for attempt in range(self.max_retries):
             try:
-                with httpx.Client(timeout=self.timeout) as client:
-                    response = client.post(
-                        url,
-                        headers=headers,
-                        json=payload,
-                    )
-                
-                response.raise_for_status()
-                result = response.json()
-                
-                content = extract_text(result, self.config.resolved_api_format)
+                content = self._request(system_prompt, text, timeout=self.timeout)
                 
                 # Check for common refusal patterns
                 refusal_patterns = [
@@ -275,25 +285,11 @@ IMPORTANT RULES:
                 f"**Article Specifications:**\n*   [Language]: {language_name}\n\n**Instructions:**"
             )
         
-        url, headers, payload = build_request(
-            self.config, self.api_key, system_prompt, content,
-        )
-        
         last_error: TranslationError | None = None
         
         for attempt in range(self.max_retries):
             try:
-                with httpx.Client(timeout=self.timeout * 2) as client:  # Longer timeout for articles
-                    response = client.post(
-                        url,
-                        headers=headers,
-                        json=payload,
-                    )
-                
-                response.raise_for_status()
-                result = response.json()
-                
-                article_content = extract_text(result, self.config.resolved_api_format)
+                article_content = self._request(system_prompt, content, timeout=self.timeout * 2)
                 
                 # Check for common refusal patterns - don't retry, it's deterministic
                 refusal_patterns = [

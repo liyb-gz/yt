@@ -2,10 +2,14 @@
 
 import argparse
 import logging
+import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote, quote_plus, urlsplit, urlunsplit
 
+import httpx
 import yaml
 from rich.console import Console
 from rich.logging import RichHandler
@@ -14,7 +18,9 @@ from rich.syntax import Syntax
 from yt import __version__
 from yt.config import Config, DEFAULT_CONFIG_PATH
 from yt.formatter import OutputFormat
+from yt.llm import LLMResponseError, build_request
 from yt.transcript import process_video
+from yt.translate import TranslationClient
 from yt.utils import parse_language_codes, expand_path
 from yt.youtube import YouTubeClient
 
@@ -156,6 +162,8 @@ Examples:
   yt --input urls.txt
   yt "URL" --languages en,ja,ko
   yt "URL" --pipe | other-tool
+  yt --test
+  yt --test --config other-config.yaml
   yt config show
   yt config init
         """,
@@ -184,6 +192,12 @@ Examples:
         "--config",
         type=Path,
         help="Path to config.yaml (default: ~/.config/yt/config.yaml)",
+    )
+
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Test the configured LLM with one small live request (no YouTube URL needed)",
     )
     
     parser.add_argument(
@@ -410,6 +424,92 @@ def cmd_config_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _test_display(value: str, api_key: str | None = None) -> str:
+    """Hide credentials in diagnostic text, including URLs echoed by a provider."""
+    def hide_url(match: re.Match) -> str:
+        try:
+            url = urlsplit(match.group())
+            return urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", ""))
+        except ValueError:
+            return "[redacted URL]"
+
+    value = re.sub(r"https?://[^\s]+", hide_url, value)
+    if api_key:
+        for secret in {api_key, quote(api_key, safe=""), quote_plus(api_key)}:
+            value = value.replace(secret, "[redacted]")
+    return value
+
+
+def cmd_test_llm(args: argparse.Namespace) -> int:
+    """Test the LLM without downloading videos or writing output files."""
+    api_key = None
+    started = None
+
+    def report(message: str) -> None:
+        console.print(_test_display(message, api_key), markup=False, highlight=False, soft_wrap=True)
+
+    try:
+        config_path = expand_path(str(args.config or DEFAULT_CONFIG_PATH))
+        if args.config and not config_path.is_file():
+            report(f"LLM test failed: Configuration file not found: {config_path}")
+            return 1
+        config = Config.load(config_path)
+        api_key = config.llm.api_key
+        report("Testing LLM configuration")
+        report(f"Config: {config_path}" + (" (defaults)" if not config_path.exists() else ""))
+        report(f"API format: {config.llm.resolved_api_format} ({config.llm.api_format})")
+        report(f"Model: {config.llm.model}")
+        # Use the shared builder to display the resolved Gemini model URL.
+        endpoint, _, _ = build_request(config.llm, "", "", "")
+        report(f"Endpoint: {endpoint}")
+        if not api_key or not api_key.strip():
+            report(f"LLM test failed: API key not found. Set {config.llm.api_key_env}.")
+            return 1
+        report(f"API key: {config.llm.api_key_env} (set)")
+        client = TranslationClient(
+            base_url=config.llm.base_url,
+            api_key=api_key,
+            model=config.llm.model,
+            api_format=config.llm.api_format,
+            max_tokens=config.llm.max_tokens,
+        )
+        report("Sending a small live request...")
+        started = time.perf_counter()
+        content = client.test_connection()
+        report(f"LLM test passed ({time.perf_counter() - started:.2f}s)")
+        preview = " ".join(content.split())
+        report(f"Response: {preview[:200]}" + ("..." if len(preview) > 200 else ""))
+        return 0
+    except httpx.HTTPStatusError as error:
+        detail = error.response.reason_phrase
+        try:
+            body = error.response.json()
+            api_error = body.get("error", body)
+            if isinstance(api_error, dict):
+                detail = str(api_error.get("message", detail))
+            elif isinstance(api_error, str):
+                detail = api_error
+        except (ValueError, AttributeError):
+            pass
+        message = f"API error ({error.response.status_code}): {detail}"
+    except httpx.TimeoutException:
+        message = "Request timed out after 120s"
+    except httpx.RequestError as error:
+        message = f"Connection error: {error}"
+    except LLMResponseError as error:
+        message = str(error)
+    except yaml.YAMLError as error:
+        message = "Invalid YAML configuration"
+        mark = getattr(error, "problem_mark", None)
+        if mark is not None:
+            message += f" at line {mark.line + 1}, column {mark.column + 1}"
+    except Exception as error:
+        message = str(error)
+    elapsed = f" ({time.perf_counter() - started:.2f}s)" if started is not None else ""
+    report(f"LLM test failed{elapsed}: {message}")
+    return 1
+
+
 def collect_urls(args: argparse.Namespace) -> list[str]:
     """Collect URLs from arguments and input file."""
     urls: list[str] = list(args.urls) if args.urls else []
@@ -630,6 +730,10 @@ def main(argv: list[str] | None = None) -> int:
         # Main command: process URLs
         main_parser = build_main_parser()
         args = main_parser.parse_args(argv)
+        if args.test:
+            if args.urls or args.input_file:
+                main_parser.error("--test cannot be combined with URLs or --input")
+            return cmd_test_llm(args)
         return cmd_process_urls(args)
 
 

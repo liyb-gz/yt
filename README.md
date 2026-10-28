@@ -221,6 +221,24 @@ Export your API keys before running:
 export OPENAI_API_KEY="your-api-key"
 ```
 
+### Test the LLM Configuration
+
+```bash
+yt --test
+yt --test --config another-config.yaml
+```
+
+This sends one small live request through the same API client used for translations
+and articles. It reports the resolved API format, model, endpoint, response time,
+and a short response preview. API key values, URL credentials, and URL query
+parameters are hidden in the diagnostics.
+
+The test uses your configured model and output limit without retries. It needs
+no YouTube URL and does not download videos or write articles, transcripts, or
+logs. It uses the provider's API quota. A successful request with usable response
+text exits with `0`; configuration, authentication, network, or response errors
+exit with `1`. Combining `--test` with a URL or `--input` is a usage error (`2`).
+
 ## Usage
 
 ### Basic Usage
