@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -59,16 +60,22 @@ class LLMConfig:
     base_url: str = ""
     model: str = ""
     api_key_env: str = ""
-    api_format: str = "chat_completions"
+    api_format: str | None = "auto"
     max_tokens: int | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.api_format, str) or self.api_format not in LLM_API_DEFAULTS:
+        if self.api_format is None:
+            self.api_format = "auto"
+        elif isinstance(self.api_format, str):
+            self.api_format = self.api_format.strip() or "auto"
+        if not isinstance(self.api_format, str) or (
+            self.api_format != "auto" and self.api_format not in LLM_API_DEFAULTS
+        ):
             raise ValueError(
-                f"llm.api_format must be one of {', '.join(LLM_API_DEFAULTS)}, "
+                f"llm.api_format must be auto or one of {', '.join(LLM_API_DEFAULTS)}, "
                 f"got '{self.api_format}'"
             )
-        defaults = LLM_API_DEFAULTS[self.api_format]
+        defaults = LLM_API_DEFAULTS[self.resolved_api_format]
         self.base_url = self.base_url or defaults[0]
         self.model = self.model or defaults[1]
         self.api_key_env = self.api_key_env or defaults[2]
@@ -78,6 +85,21 @@ class LLMConfig:
             or self.max_tokens <= 0
         ):
             raise ValueError("llm.max_tokens must be a positive integer or null")
+
+    @property
+    def resolved_api_format(self) -> str:
+        """Resolve auto from the endpoint path, keeping legacy chat as fallback."""
+        api_format = self.api_format or "auto"
+        if api_format != "auto":
+            return api_format
+        path = urlsplit(self.base_url or "").path.rstrip("/").lower()
+        if path.endswith(("/responses", "/response")):
+            return "responses"
+        if path.endswith(("/messages", "/message")):
+            return "anthropic"
+        if path.endswith(":generatecontent"):
+            return "gemini"
+        return "chat_completions"
     
     @property
     def api_key(self) -> str | None:
@@ -265,7 +287,7 @@ class Config:
             base_url=llm_data.get("base_url", ""),
             model=llm_data.get("model", ""),
             api_key_env=llm_data.get("api_key_env", ""),
-            api_format=llm_data.get("api_format", "chat_completions"),
+            api_format=llm_data.get("api_format", "auto"),
             max_tokens=llm_data.get("max_tokens"),
         )
         

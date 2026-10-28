@@ -56,8 +56,16 @@ def mock_http(monkeypatch, handler):
 
 @pytest.mark.parametrize("api_format", RESPONSES)
 @pytest.mark.parametrize("operation", ["translate", "article"])
-def test_native_api_request_and_response(monkeypatch, api_format, operation):
-    config = Config.from_dict({"llm": {"api_format": api_format, "max_tokens": 8192}})
+@pytest.mark.parametrize("format_setting", ["explicit", "omitted", "auto", None, "", "  "])
+def test_native_api_request_and_response(monkeypatch, api_format, operation, format_setting):
+    llm_settings = {"max_tokens": 8192}
+    if format_setting == "explicit":
+        llm_settings["api_format"] = api_format
+    else:
+        llm_settings["base_url"] = LLMConfig(api_format=api_format).base_url
+        if format_setting != "omitted":
+            llm_settings["api_format"] = format_setting
+    config = Config.from_dict({"llm": llm_settings})
     requests = []
 
     def handler(request):
@@ -141,7 +149,8 @@ def test_existing_openrouter_config_and_request(monkeypatch):
     url, headers, payload = build_request(config.llm, "key", "system", "source", 0.3)
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         client.post(url, headers=headers, json=payload).raise_for_status()
-    assert config.llm.api_format == "chat_completions"
+    assert config.llm.api_format == "auto"
+    assert config.llm.resolved_api_format == "chat_completions"
     assert config.llm.api_key_env == "CUSTOM_KEY"
 
 
@@ -230,7 +239,7 @@ def test_http_error_retry_policy(monkeypatch, api_format, status, expected_calls
     assert len(calls) == expected_calls
 
 
-@pytest.mark.parametrize("api_format", [None, "wrong", [], True])
+@pytest.mark.parametrize("api_format", ["wrong", [], {}, True, False, 0])
 def test_invalid_api_format(api_format):
     with pytest.raises(ValueError, match="llm.api_format"):
         Config.from_dict({"llm": {"api_format": api_format}})
@@ -248,3 +257,77 @@ def test_config_template_loads_and_old_defaults_are_unchanged():
     assert config.llm.base_url == "https://api.openai.com/v1/chat/completions"
     assert config.llm.model == "gpt-4o"
     assert config.llm.api_key_env == "OPENAI_API_KEY"
+    assert config.llm.api_format == "auto"
+    assert config.llm.resolved_api_format == "chat_completions"
+
+
+@pytest.mark.parametrize("endpoint,expected", [
+    ("https://proxy.example/v1/chat/completions", "chat_completions"),
+    ("https://proxy.example/v1/chat/completion/", "chat_completions"),
+    ("https://proxy.example/v1/responses", "responses"),
+    ("https://proxy.example/v1/response/", "responses"),
+    ("https://proxy.example/v1/responses/?api-version=test#fragment", "responses"),
+    ("https://proxy.example/v1/Responses", "responses"),
+    ("https://proxy.example/v1/messages", "anthropic"),
+    ("https://proxy.example/v1/message/?custom=value", "anthropic"),
+    ("https://proxy.example/v1beta/models/{model}:generateContent", "gemini"),
+    ("https://proxy.example/v1beta/models/gemini-2.5-flash:generateContent/?alt=json#text", "gemini"),
+    ("https://proxy.example/custom", "chat_completions"),
+    ("https://proxy.example/responses/other", "chat_completions"),
+    ("https://proxy.example/custom?path=/messages", "chat_completions"),
+    ("https://messages.example/custom#responses", "chat_completions"),
+    ("", "chat_completions"),
+    (None, "chat_completions"),
+])
+def test_detect_api_format_from_endpoint_path(endpoint, expected):
+    config = Config.from_dict({"llm": {"base_url": endpoint}}).llm
+    assert config.api_format == "auto"
+    assert config.resolved_api_format == expected
+    defaults = LLMConfig(api_format=expected)
+    assert config.model == defaults.model
+    assert config.api_key_env == defaults.api_key_env
+
+
+@pytest.mark.parametrize("setting", ["api_format:", "api_format: null", 'api_format: ""', "api_format: auto"])
+def test_yaml_empty_format_is_auto(setting):
+    data = yaml.safe_load(f"llm:\n  base_url: https://proxy.example/v1/messages\n  {setting}\n")
+    config = Config.from_dict(data).llm
+    assert config.api_format == "auto"
+    assert config.resolved_api_format == "anthropic"
+    assert config.api_key_env == "ANTHROPIC_API_KEY"
+
+
+def test_explicit_format_overrides_url_and_preserves_settings(monkeypatch):
+    def handler(request):
+        assert str(request.url) == "https://proxy.example/v1/messages"
+        assert request.headers["Authorization"] == "Bearer custom-key"
+        assert "x-api-key" not in request.headers
+        payload = json.loads(request.content)
+        assert payload["model"] == "custom-model"
+        assert payload["input"] == "source"
+        assert "messages" not in payload
+        return httpx.Response(200, json=RESPONSES["responses"])
+    mock_http(monkeypatch, handler)
+    config = Config.from_dict({"llm": {
+        "api_format": "responses",
+        "base_url": "https://proxy.example/v1/messages",
+        "model": "custom-model",
+        "api_key_env": "CUSTOM_KEY",
+    }})
+    assert config.llm.resolved_api_format == "responses"
+    monkeypatch.setenv("CUSTOM_KEY", "custom-key")
+    client = TranscriptFetcher(config, MagicMock()).translation_client
+    assert client.translate_plain_text("source", "en", "ja") == "Translated text"
+
+
+@pytest.mark.parametrize("format_setting", [None, "", "auto"])
+def test_direct_client_auto_detects_format(monkeypatch, format_setting):
+    def handler(request):
+        assert request.headers["x-api-key"] == "key"
+        assert "system" in json.loads(request.content)
+        return httpx.Response(200, json=RESPONSES["anthropic"])
+    mock_http(monkeypatch, handler)
+    client = TranslationClient(
+        "https://proxy.example/v1/messages", "key", "custom-model", api_format=format_setting,
+    )
+    assert client.translate_plain_text("source", "en", "ja") == "Translated text"

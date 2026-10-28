@@ -132,7 +132,8 @@ transcription:
 
 # LLM API for translation and article generation
 llm:
-  api_format: chat_completions  # chat_completions, responses, anthropic, gemini
+  api_format: auto  # auto, chat_completions, responses, anthropic, gemini
+  # Omit or leave empty to auto-detect the format from base_url.
   # Omit base_url, model, and api_key_env to use defaults for the selected format.
   # base_url is the full endpoint; Gemini supports {model} in the URL.
   base_url: https://api.openai.com/v1/chat/completions

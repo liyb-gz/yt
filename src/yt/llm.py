@@ -21,8 +21,9 @@ def build_request(
     url = config.base_url.rstrip("/")
     headers = {"Content-Type": "application/json"}
     payload: dict[str, Any]
+    api_format = config.resolved_api_format
 
-    if config.api_format == "gemini":
+    if api_format == "gemini":
         model = quote(config.model.removeprefix("models/"), safe="")
         url = url.replace("{model}", model)
         headers["x-goog-api-key"] = api_key
@@ -34,7 +35,7 @@ def build_request(
             "contents": [{"role": "user", "parts": [{"text": text}]}],
             "generationConfig": generation_config,
         }
-    elif config.api_format == "anthropic":
+    elif api_format == "anthropic":
         headers.update({"x-api-key": api_key, "anthropic-version": "2023-06-01"})
         payload = {
             "model": config.model,
@@ -43,7 +44,7 @@ def build_request(
             "max_tokens": config.max_tokens or 16384,
             "temperature": temperature,
         }
-    elif config.api_format == "responses":
+    elif api_format == "responses":
         headers["Authorization"] = f"Bearer {api_key}"
         payload = {
             "model": config.model,

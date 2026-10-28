@@ -130,7 +130,7 @@ transcription:
 
 # LLM API for translation and article generation
 llm:
-    api_format: chat_completions # chat_completions, responses, anthropic, gemini
+    api_format: auto # auto, chat_completions, responses, anthropic, gemini
     base_url: https://api.openai.com/v1/chat/completions
     model: gpt-4o
     api_key_env: OPENAI_API_KEY
@@ -140,8 +140,30 @@ llm:
 ### LLM API Formats
 
 `llm.api_format` selects the request format, authentication, and response parsing
-for both translations and articles. Existing configs default to `chat_completions`,
-including OpenRouter and other compatible endpoints.
+for both translations and articles. It defaults to `auto`: omitting the setting,
+leaving it empty (`api_format:`), or setting it to `null`, `""`, or `auto` detects
+the format from the path in `base_url`:
+
+| Endpoint suffix | Detected format |
+| --- | --- |
+| `/chat/completions` or `/chat/completion` | `chat_completions` |
+| `/responses` or `/response` | `responses` |
+| `/messages` or `/message` | `anthropic` |
+| `:generateContent` | `gemini` |
+
+Detection ignores trailing slashes, query parameters, and fragments. Unrecognized
+paths fall back to `chat_completions` for compatibility with existing configs and
+custom proxies. An explicit format always overrides detection. With no endpoint
+configured, `auto` uses the default OpenAI Chat Completions endpoint.
+
+For example, this automatically uses the Responses API:
+
+```yaml
+llm:
+    base_url: https://api.openai.com/v1/responses
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+```
 
 Replace the `llm` block with one of these examples:
 
@@ -179,7 +201,7 @@ For Gemini, `{model}` is replaced with the configured model; a fixed model URL
 also works. Export the key named by `api_key_env` in your shell.
 
 You can omit `base_url`, `model`, and `api_key_env` to use the defaults shown
-for the selected format. For example, `llm: {api_format: gemini}` is sufficient.
+for the selected or detected format. For example, `llm: {api_format: gemini}` is sufficient.
 When switching formats in an existing config, update or remove those three
 settings as well; explicit values always take precedence.
 

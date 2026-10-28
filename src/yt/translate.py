@@ -28,7 +28,7 @@ class TranslationClient:
         model: str = "gpt-4o",
         timeout: float = 120.0,
         max_retries: int = 3,
-        api_format: str = "chat_completions",
+        api_format: str | None = "auto",
         max_tokens: int | None = None,
     ):
         self.config = LLMConfig(
@@ -100,7 +100,7 @@ IMPORTANT RULES:
                 response.raise_for_status()
                 result = response.json()
                 
-                content = extract_text(result, self.config.api_format)
+                content = extract_text(result, self.config.resolved_api_format)
                 
                 # Check for common refusal patterns
                 refusal_patterns = [
@@ -293,7 +293,7 @@ IMPORTANT RULES:
                 response.raise_for_status()
                 result = response.json()
                 
-                article_content = extract_text(result, self.config.api_format)
+                article_content = extract_text(result, self.config.resolved_api_format)
                 
                 # Check for common refusal patterns - don't retry, it's deterministic
                 refusal_patterns = [
