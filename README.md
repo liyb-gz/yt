@@ -209,9 +209,9 @@ settings as well; explicit values always take precedence.
 requires a limit and defaults to 16384; other formats use the provider's default
 when omitted. Increase it within your model's supported range for long articles.
 Truncated, blocked, and empty responses produce an error instead of saving
-incomplete content. Responses requests use the model's default temperature for
-compatibility with reasoning models. Whisper transcription still uses its
-separate `transcription` settings.
+incomplete content. All API formats use the model's default temperature for
+compatibility with models that reject or ignore custom temperatures. Whisper
+transcription still uses its separate `transcription` settings.
 
 ### Environment Variables
 

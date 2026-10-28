@@ -83,7 +83,7 @@ IMPORTANT RULES:
 4. Output ONLY the translated content, nothing else"""
         
         url, headers, payload = build_request(
-            self.config, self.api_key, system_prompt, text, temperature=0.3,
+            self.config, self.api_key, system_prompt, text,
         )
         
         last_error: TranslationError | None = None
@@ -276,7 +276,7 @@ IMPORTANT RULES:
             )
         
         url, headers, payload = build_request(
-            self.config, self.api_key, system_prompt, content, temperature=0.7,
+            self.config, self.api_key, system_prompt, content,
         )
         
         last_error: TranslationError | None = None

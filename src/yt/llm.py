@@ -15,9 +15,8 @@ def build_request(
     api_key: str,
     system_prompt: str,
     text: str,
-    temperature: float,
 ) -> tuple[str, dict[str, str], dict[str, Any]]:
-    """Build a non-streaming request using the selected wire format."""
+    """Build a non-streaming request, leaving sampling to the model's defaults."""
     url = config.base_url.rstrip("/")
     headers = {"Content-Type": "application/json"}
     payload: dict[str, Any]
@@ -27,7 +26,7 @@ def build_request(
         model = quote(config.model.removeprefix("models/"), safe="")
         url = url.replace("{model}", model)
         headers["x-goog-api-key"] = api_key
-        generation_config: dict[str, Any] = {"temperature": temperature}
+        generation_config: dict[str, Any] = {}
         if config.max_tokens is not None:
             generation_config["maxOutputTokens"] = config.max_tokens
         payload = {
@@ -42,7 +41,6 @@ def build_request(
             "system": system_prompt,
             "messages": [{"role": "user", "content": text}],
             "max_tokens": config.max_tokens or 16384,
-            "temperature": temperature,
         }
     elif api_format == "responses":
         headers["Authorization"] = f"Bearer {api_key}"
@@ -51,7 +49,6 @@ def build_request(
             "instructions": system_prompt,
             "input": text,
         }
-        # Reasoning models may reject temperature; let the model use its default.
         if config.max_tokens is not None:
             payload["max_output_tokens"] = config.max_tokens
     else:
@@ -62,7 +59,6 @@ def build_request(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
             ],
-            "temperature": temperature,
         }
         if config.max_tokens is not None:
             payload["max_tokens"] = config.max_tokens

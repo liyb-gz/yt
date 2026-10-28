@@ -84,6 +84,8 @@ def test_native_api_request_and_response(monkeypatch, api_format, operation, for
     assert len(requests) == 1
     request = requests[0]
     payload = json.loads(request.content)
+    assert "temperature" not in payload
+    assert "temperature" not in payload.get("generationConfig", {})
     assert request.method == "POST"
     assert request.headers["Content-Type"] == "application/json"
     if api_format == "gemini":
@@ -105,6 +107,7 @@ def test_native_api_request_and_response(monkeypatch, api_format, operation, for
             assert "Authorization" not in request.headers
             assert payload["messages"] == [{"role": "user", "content": "Source text"}]
             assert payload["max_tokens"] == 8192
+            assert "temperature" not in payload
             prompt = payload["system"]
         elif api_format == "responses":
             assert request.headers["Authorization"] == "Bearer test-key"
@@ -141,12 +144,11 @@ def test_existing_openrouter_config_and_request(monkeypatch):
                 {"role": "system", "content": "system"},
                 {"role": "user", "content": "source"},
             ],
-            "temperature": 0.3,
         }
         return httpx.Response(200, json=RESPONSES["chat_completions"])
 
     from yt.llm import build_request
-    url, headers, payload = build_request(config.llm, "key", "system", "source", 0.3)
+    url, headers, payload = build_request(config.llm, "key", "system", "source")
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         client.post(url, headers=headers, json=payload).raise_for_status()
     assert config.llm.api_format == "auto"
@@ -331,3 +333,31 @@ def test_direct_client_auto_detects_format(monkeypatch, format_setting):
         "https://proxy.example/v1/messages", "key", "custom-model", api_format=format_setting,
     )
     assert client.translate_plain_text("source", "en", "ja") == "Translated text"
+
+
+@pytest.mark.parametrize("operation", ["translate", "article"])
+@pytest.mark.parametrize("api_format", RESPONSES)
+def test_model_requiring_default_temperature(monkeypatch, operation, api_format):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        payload = json.loads(request.content)
+        if api_format != "gemini":
+            assert payload["model"] == "claude-haiku-5-5"
+        if "temperature" in payload or "temperature" in payload.get("generationConfig", {}):
+            return httpx.Response(400, json={"error": {
+                "message": "claude-haiku-5-5 does not support non-default temperature",
+            }})
+        return httpx.Response(200, json=RESPONSES[api_format])
+
+    mock_http(monkeypatch, handler)
+    client = TranslationClient(
+        LLMConfig(api_format=api_format).base_url, "key", "claude-haiku-5-5",
+    )
+    if operation == "article":
+        result = client.generate_article("source", language="zh-TW")
+    else:
+        result = client.translate_plain_text("source", "en", "zh-TW")
+    assert result == "Translated text"
+    assert len(requests) == 1

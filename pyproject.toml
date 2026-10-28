@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "yt-transcribe"
-version = "0.2.1"
+version = "0.2.2"
 description = "CLI tool to download YouTube subtitles with intelligent fallbacks and optional translation"
 readme = "README.md"
 license = "MIT"
